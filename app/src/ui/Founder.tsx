@@ -296,6 +296,18 @@ function Wait({ pending }: { pending: PendingFounder }) {
             <h1>{t('fs.foundedTitle', { dao })}</h1>
             <ProtectKey />
           </>
+        ) : founded && !listed ? (
+          // Founded without this phone's code (COUNCIL DAO, 11 Nov 2026): the founders' list is final, joining is the way in.
+          <>
+            <h1>{t('fs.missedTitle', { dao })}</h1>
+            <p class="lead">{t('fs.missedText', { dao })}</p>
+            <button type="button" class="btn primary" onClick={async () => {
+              await store.clearPending(site.site);
+              await store.clearSetup(site.site);
+              setState({ pending: undefined });
+              go('/candidate');
+            }}>{t('fs.missedJoin')}</button>
+          </>
         ) : (
           <>
             <h1>{t('fs.waitTitle')}</h1>
@@ -320,7 +332,7 @@ function Wait({ pending }: { pending: PendingFounder }) {
           </>
         )}
         {err && <p class="warnbox">{err}</p>}
-        {(!genesis || !listed) && <button type="button" class="btn link" onClick={restart}>{t('fs.restart')}</button>}
+        {(!genesis || !listed) && !founded && <button type="button" class="btn link" onClick={restart}>{t('fs.restart')}</button>}
       </main>
     </>
   );

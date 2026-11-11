@@ -182,6 +182,8 @@ export interface RoundView {
   /** A council change's migration: the whole treasury to the new descriptor (6.1). */
   isMigration: boolean;
   status: 'open' | 'paid' | 'void' | 'invalid';
+  /** A later round on one of this round's coins (protocol 6, replacement): only one of the two can confirm. */
+  replacedBy?: RoundView;
   /** Valid partial signatures: person → input index → pubkey. */
   signatures: Map<string, Map<number, string>>;
   signEvents: Event[]; // valid dao.sign events carrying signatures
@@ -801,11 +803,19 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       const mine = new Set(r.inspection?.inputs.map(x => `${x.txid}:${x.vout}`));
       if (out.some(o => o !== r && o.status === 'paid' && o.inspection?.inputs.some(x => mine.has(`${x.txid}:${x.vout}`)))) r.status = 'void';
     }
+    // An open round replaced by a later one on its coins: the later one is the round in hand.
+    for (const r of out) {
+      if (r.status !== 'open') continue;
+      const mine = new Set(r.inspection?.inputs.map(x => `${x.txid}:${x.vout}`));
+      const later = out.filter(o => o !== r && o.status === 'open' && o.event.created_at >= r.event.created_at && o.event.id !== r.event.id
+        && (o.event.created_at > r.event.created_at || o.event.id > r.event.id) && o.inspection?.inputs.some(x => mine.has(`${x.txid}:${x.vout}`)));
+      if (later.length) r.replacedBy = later.sort((a, b) => b.event.created_at - a.event.created_at)[0];
+    }
     const pay = new Map<string, Payment>();
     for (const p of proposals) {
       if (p.status !== 'passed' || !['payout', 'close', 'change_council'].includes(p.content.type)) continue;
       const paidRound = out.find(r => r.status === 'paid' && r.content.proposals.includes(p.event.id));
-      const openRound = out.find(r => r.status === 'open' && r.content.proposals.includes(p.event.id));
+      const openRound = out.find(r => r.status === 'open' && !r.replacedBy && r.content.proposals.includes(p.event.id));
       const l = lapseAt(p);
       pay.set(p.event.id, paidRound ? { status: 'paid', round: paidRound, lapseAt: l }
         : openRound ? { status: 'in_round', round: openRound, lapseAt: l }
@@ -835,6 +845,14 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         const m = members.find(m => personOf(m.key) === personOf(k));
         if (!m || m.council || councilPersonsAt(now).has(personOf(m.key))) return `cannot remove: ${id}`;
         members = members.filter(x => x !== m);
+      } else if (p?.content.type === 'change_council') {
+        // 4.1.2 / roster: the council flags follow a council change once its migration round has a receipt.
+        if (payments.get(id)?.status !== 'paid') return `migration round not paid yet: ${id}`;
+        const { out_key, in_key } = p.content.payload as { out_key: string | null; in_key: string | null };
+        for (const m of members) {
+          if (out_key && personOf(m.key) === personOf(out_key)) m.council = false;
+          if (in_key && personOf(m.key) === personOf(in_key)) m.council = true;
+        }
       } else if (leave) {
         const m = members.find(m => personOf(m.key) === personOf(leave.pubkey));
         if (!m) return `not a member: ${id}`;
@@ -976,8 +994,17 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
   for (const p of proposals) {
     if (p.status !== 'passed' || appliedRoster.has(p.event.id)) continue;
     if (p.content.type === 'add_member' && !current.members.some(m => personOf(m.key) === personOf(p.content.payload.candidate_key))) pendingRoster.push(p.event.id);
-    if (p.content.type === 'remove_member' && current.members.some(m => personOf(m.key) === personOf(p.content.payload.member_key) && !m.council)) pendingRoster.push(p.event.id);
+    // A council member is removed only once a council change has taken them off the council (in force now).
+    if (p.content.type === 'remove_member' && current.members.some(m => personOf(m.key) === personOf(p.content.payload.member_key)) && !councilPersonsAt(now).has(personOf(p.content.payload.member_key))) pendingRoster.push(p.event.id);
+    if (p.content.type === 'change_council' && payments.get(p.event.id)?.status === 'paid') {
+      const { out_key, in_key } = p.content.payload as { out_key: string | null; in_key: string | null };
+      const same = out_key && in_key && personOf(out_key) === personOf(in_key);
+      const flagOf = (k: string) => current.members.find(m => personOf(m.key) === personOf(k))?.council;
+      if (!same && ((out_key && flagOf(out_key) === true) || (in_key && flagOf(in_key) === false))) pendingRoster.push(p.event.id);
+    }
   }
+  // Council changes first in the basis: a removal in the same version needs the council flag cleared before it.
+  pendingRoster.sort((a, b) => Number(proposals.find(p => p.event.id === b)?.content.type === 'change_council') - Number(proposals.find(p => p.event.id === a)?.content.type === 'change_council'));
   for (const l of leaves.values()) if (!appliedRoster.has(l.id) && current.members.some(m => personOf(m.key) === personOf(l.pubkey))) pendingRoster.push(l.id);
   for (const r of rekeys) if (r.effectiveAt !== undefined && !appliedRoster.has(r.event.id) && current.members.some(m => m.key === r.oldKey)) pendingRoster.push(r.event.id);
   const appliedSettings = new Set(settings.flatMap(s => s.content.basis ?? []));
@@ -1062,7 +1089,11 @@ export function nextRoster(s: DaoState, today = utcDate(s.now)): RosterContent |
       const mode: Verified = vs.some(v => v && parseJson<any>(v.content).mode === 'in_person') ? 'in_person' : 'remote';
       out.push({ key: p.content.payload.candidate_key, name: p.content.payload.name, since: today, verified: mode, council: false });
     } else if (p?.content.type === 'remove_member') out = out.filter(m => s.personOf(m.key) !== s.personOf(p.content.payload.member_key));
-    else if (leave) out = out.filter(m => s.personOf(m.key) !== s.personOf(leave.pubkey));
+    else if (p?.content.type === 'change_council') {
+      const { out_key, in_key } = p.content.payload as { out_key: string | null; in_key: string | null };
+      out = out.map(m => (in_key && s.personOf(m.key) === s.personOf(in_key) ? { ...m, council: true }
+        : out_key && s.personOf(m.key) === s.personOf(out_key) ? { ...m, council: false } : m));
+    } else if (leave) out = out.filter(m => s.personOf(m.key) !== s.personOf(leave.pubkey));
     else if (rk) out = out.map(m => (m.key === rk.oldKey ? { ...m, key: rk.newKey, verified: rk.mode } : m));
   }
   return { version: last.content.version + 1, prev: last.hash, basis, members: out };

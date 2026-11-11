@@ -149,7 +149,8 @@ async function autoRounds() {
     const txid = r.inspection.txid;
     const st = await txStatus(chainApis(), txid);
     // Not known to any source: broadcast, and again if a source took it but it never reached the network.
-    if (!st && r.ready && Date.now() - (broadcasted.get(txid) ?? 0) > REBROADCAST_MS) {
+    // A replaced round is not sent: its replacement is the round in hand. (If it was sent before, its receipt still comes.)
+    if (!st && r.ready && !r.replacedBy && Date.now() - (broadcasted.get(txid) ?? 0) > REBROADCAST_MS) {
       try {
         await broadcastRound(r);
       } catch {

@@ -2,6 +2,29 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.6.0 · 11 November 2026
+
+Fixes and gaps from the COUNCIL DAO run (`docs/runs/2026-11-council-dao.md`).
+
+**Replacing a round**
+- An open round that has not got enough signatures can be **replaced** by the council ("Is the round stuck, or a payout missing?" → **Replace this round**). The new round spends the same coins, so only one can confirm; it carries the open round's payouts and any approved since, and the council can leave one out (it goes back to waiting). The old round says it was replaced and is not broadcast; once the new one confirms, the old one is void. Signatures do not carry over. Before this, a declined or unsignable round blocked every later payout.
+
+**Signing**
+- A council member who is signed out sees "sign in first" on the round before the SeedSigner steps, with a Sign in button.
+- A signature scanned back from the SeedSigner is kept on the phone until it is published: if the phone was signed out or the tab reloaded (old phones, camera), the member signs in and publishes it without signing on the device again.
+- "not-signed-in" is now a plain message.
+- Once a round has enough signatures, a council member who has not signed sees "not needed" instead of the signing steps.
+
+**Other fixes**
+- During a council change, **Donate** shows the new treasury's address, not the one being emptied.
+- A founder left off the founders' list sees that the DAO is founded and a button to join as a member, instead of "talk to the person preparing the founding".
+- The Remove member form explains that a council member is removed from the council first (council change, reason Recall or Resignation).
+- **The member list follows council changes.** After a council change's migration has its receipt, the council publishes a new member list version that moves the "Council" mark (protocol, rosters: "a council change only once its migration round has a receipt"; this part was missing). Before, a recalled member stayed marked as council in the list, so a later proposal to remove them from the DAO passed but could never be applied. A removal can share a member-list version with the recall; the recall comes first.
+
+**Tests**
+- Unit: replacing an open round (coins, payouts carried and left out, void after the replacement confirms).
+- End-to-end (`e2e/recall.e2e.cjs`): a council member recalled (2 of 3 → 2 of 2) and then removed from the DAO; a round declined by a council member is replaced by one that also pays a payout approved since, on the same coin.
+
 ## v0.5.2 · 11 November 2026
 
 - **No more typing seed words after a lost-key report.** A council member who reported a lost SeedSigner key was told to type the words into the phone if they found them. That advice is gone: if the card or plate turns up, they load it on the SeedSigner and scan its key export (public only) from their profile; a matching fingerprint tells the council the key is back. The lost-key text speaks of the card and plate, not words.

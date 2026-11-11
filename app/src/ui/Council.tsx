@@ -1,4 +1,5 @@
 // Council inbox: counts, member list and rules versions, key replacements, checking candidates.
+import { openRound } from './Round';
 import { useState } from 'preact/hooks';
 import { chainSeen, signAndPublish, useApp } from '../app';
 import { fmtSats, t } from '../i18n';
@@ -37,7 +38,7 @@ export function rekeyBlocked(s: DaoState, oldKey: string): boolean {
 
 /** The open round's transaction is already on the network (as this phone last saw it). */
 const roundOnChain = (s: DaoState) => {
-  const r = s.rounds.find(x => x.status === 'open');
+  const r = openRound(s);
   return !!(r?.ready && r.inspection && chainSeen.get(r.inspection.txid));
 };
 
@@ -52,7 +53,7 @@ export function councilTodo(s: DaoState, myPerson: string): number {
   n += open(s.rosterCandidates, s.pendingRoster);
   n += open(s.settingsCandidates, s.pendingSettings);
   n += liveRekeys(s).filter(r => !r.endorsers.includes(myPerson) && !rekeyBlocked(s, r.oldKey)).length;
-  const openR = s.rounds.find(r => r.status === 'open');
+  const openR = openRound(s);
   if (openR ? !openR.signatures.has(myPerson) || (openR.ready && !roundOnChain(s)) : [...s.payments.values()].some(p => p.status === 'waiting')) n++;
   return n;
 }
@@ -93,7 +94,7 @@ export function Council() {
   };
 
   const awaiting = s.proposals.filter(p => p.status === 'awaiting_tally').length;
-  const openR = s.rounds.find(r => r.status === 'open');
+  const openR = openRound(s);
   const waitingPay = [...s.payments.values()].filter(p => p.status === 'waiting').length;
   // With the latest treasury reading: payouts waiting but not enough coins (a close sweeps whatever there is).
   const waitingProps = s.proposals.filter(p => s.payments.get(p.event.id)?.status === 'waiting');

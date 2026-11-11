@@ -1,3 +1,4 @@
+import { openRound } from './Round';
 import { useEffect, useState } from 'preact/hooks';
 import { chainApis, manualRetryIn, refreshTreasury, useApp } from '../app';
 import { fmtDate, fmtSats, t } from '../i18n';
@@ -22,7 +23,7 @@ export function Home() {
   const atCap = tr ? tr.balance >= cap : false;
   const explorer = explorerOf(chainApis()[0] ?? '');
   const open = app.dao!.proposals.filter(p => p.status === 'open').reverse();
-  const round = app.dao!.rounds.find(r => r.status === 'open');
+  const round = openRound(app.dao!);
   const waiting = app.dao!.proposals.filter(p => app.dao!.payments.get(p.event.id)?.status === 'waiting' && p.content.type === 'payout');
   const waitingSats = waiting.reduce((s, p) => s + (p.content.payload.outputs as { amount_sat: number }[]).reduce((a, o) => a + o.amount_sat, 0), 0);
   const nextRoundDate = new Intl.DateTimeFormat(app.lang === 'en' ? 'en-GB' : 'it-IT', { day: 'numeric', month: 'long', timeZone: current.rules.timezone })
@@ -77,7 +78,8 @@ export function Home() {
             <p class="warn">{tr.balance > cap ? t('home.overCap', { cap: fmtSats(cap) }) : t('home.capReached', { cap: fmtSats(cap) })}</p>
           </section>
         ) : (
-          <Donate address={tr.donationAddress} first={tr.balance === 0 && tr.movements.length === 0} testnet={cfg.testnetTreasury?.name} />
+          // During a council change, donations go to the new treasury: the old one is being emptied (COUNCIL DAO, 11 Nov 2026).
+          <Donate address={nextTreasury(tr)?.donationAddress ?? tr.donationAddress} first={tr.balance === 0 && tr.movements.length === 0 && !nextTreasury(tr)} testnet={cfg.testnetTreasury?.name} />
         ))}
 
         {app.isCouncil && app.me && councilTodo(app.dao!, app.me.person) > 0 && (
@@ -209,6 +211,9 @@ function fmtTime(ms: number, lang: string): string {
 }
 
 /** The treasury's first receive address, worked out on the phone: funds sent to any treasury address are found later. */
+/** The incoming treasury while a council change is under way, once it has been read. */
+const nextTreasury = (tr: TreasuryView) => tr.others?.find(o => o.role === 'next' && o.view)?.view;
+
 function firstAddress(descriptor: string, network: Parameters<typeof parseDescriptor>[1]): string {
   return treasuryAddress(parseDescriptor(descriptor, network), network, 0, 0).address;
 }

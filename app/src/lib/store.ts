@@ -90,6 +90,31 @@ export const session = {
   clear: (daoId: string) => sessionStorage.removeItem(`session:${daoId}`),
 };
 
+/**
+ * A signed round PSBT scanned back from a SeedSigner but not yet published (the phone was signed out, or its
+ * tab reloaded): kept so it can be published after signing in, without signing on the device again. It holds
+ * only signatures for that one transaction, nothing secret.
+ */
+export const keptSignature = {
+  get(roundId: string): string | undefined {
+    try {
+      return localStorage.getItem(`signed:${roundId}`) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  set(roundId: string, psbt: string) {
+    try {
+      localStorage.setItem(`signed:${roundId}`, psbt);
+    } catch { /* storage unavailable: the member signs again */ }
+  },
+  clear(roundId: string) {
+    try {
+      localStorage.removeItem(`signed:${roundId}`);
+    } catch { /* nothing kept */ }
+  },
+};
+
 /** The last treasury view read from the chain, per DAO, so a page shows it at once instead of waiting. */
 export const treasuryCache = {
   get<T>(daoId: string): { at: number; view: T } | undefined {

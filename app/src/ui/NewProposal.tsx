@@ -280,6 +280,7 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
               </select>
             </label>
             <label class="field">{t('np.reason')}<input type="text" value={reason} onInput={e => setReason((e.target as HTMLInputElement).value)} /></label>
+            {s.members.some(m => m.council && m.key !== app.me!.key) && <p class="small">{t('np.councilNotRemovable')}</p>}
           </div>
         )}
 

@@ -392,6 +392,47 @@ describe('payout rounds (6.1-6.3)', () => {
     expect(s.rounds.find(r => r.event.id === replacement.e.id)?.status).toBe('open'); // shares a coin: allowed
   });
 
+  it('replaces an open round (6): the new round carries a later payout on the same coins; the old one is replaced, then void', () => {
+    const d = dao();
+    const p = passedPayout(d, d.T);
+    const t = d.T + 8 * DAY + 10;
+    const desc = parseDescriptor(d.state(d.T).settings[0].content.descriptor, 'testnet4');
+    const first = round(d, [p.id], [{ address: RECIPIENT, amount_sat: 120_000 }], t, coins(d).slice(0, 1));
+    d.ev(KIND.sign, { decline: 'wrong month' }, d.c[1], t + 1, [['e', first.e.id]]);
+    const q = passedPayout(d, t + 2, 40_000);
+    const t2 = t + 9 * DAY;
+    let s = d.state(t2);
+    expect(s.payments.get(q.id)?.status).toBe('waiting');
+    // the replacement must spend the open round's coin, and may add coins
+    const r2 = buildRound({ d: desc, network: 'testnet4', utxos: coins(d), outputs: [{ address: RECIPIENT, amount_sat: 120_000 }, { address: RECIPIENT, amount_sat: 40_000 }], feeRate: 2, changeIndex: 0, mustSpend: [{ txid: coins(d)[0].txid, vout: 0 }] });
+    expect(r2.inputs.some(u => u.txid === coins(d)[0].txid)).toBe(true);
+    expect(() => buildRound({ d: desc, network: 'testnet4', utxos: coins(d).slice(1), outputs: [{ address: RECIPIENT, amount_sat: 1000 }], feeRate: 2, changeIndex: 0, mustSpend: [{ txid: coins(d)[0].txid, vout: 0 }] })).toThrow('replace-coins-gone');
+    const e2 = d.ev(KIND.round, { round: '2026-12', proposals: [p.id, q.id], psbt: r2.psbt, fee_rate_sat_vb: 2, fee_sat: r2.fee }, d.c[0], t2 + 1);
+    s = d.state(t2 + 2);
+    const old = s.rounds.find(r => r.event.id === first.e.id)!;
+    const neu = s.rounds.find(r => r.event.id === e2.id)!;
+    expect(neu.errors).toEqual([]);
+    expect(old.replacedBy?.event.id).toBe(e2.id);
+    expect(neu.replacedBy).toBeUndefined();
+    expect(s.payments.get(p.id)?.round?.event.id).toBe(e2.id);
+    expect(s.payments.get(q.id)?.status).toBe('in_round');
+    // a payout left out of the replacement goes back to waiting
+    const r3 = buildRound({ d: desc, network: 'testnet4', utxos: coins(d), outputs: [{ address: RECIPIENT, amount_sat: 40_000 }], feeRate: 3, changeIndex: 0, mustSpend: [{ txid: coins(d)[0].txid, vout: 0 }] });
+    const e3 = d.ev(KIND.round, { round: '2026-12', proposals: [q.id], psbt: r3.psbt, fee_rate_sat_vb: 3, fee_sat: r3.fee }, d.c[0], t2 + 3);
+    s = d.state(t2 + 4);
+    expect(s.payments.get(p.id)?.status).toBe('waiting');
+    // the replacement is signed and confirmed: the earlier rounds on its coin are void
+    const signed = [0, 3, 4].map(i => signWithMnemonicKey(r3.psbt, masters[i]));
+    [0, 3, 4].forEach((i, k) => d.ev(KIND.sign, { psbt: signed[k] }, d.c[i], t2 + 5, [['e', e3.id]]));
+    const fin = finalizeRound(signed);
+    d.ev(KIND.receipt, { txid: fin.txid, block_height: 200 }, d.c[0], t2 + 6, [['e', e3.id]]);
+    s = d.state(t2 + 7);
+    expect(s.rounds.find(r => r.event.id === e3.id)?.status).toBe('paid');
+    expect(s.rounds.find(r => r.event.id === first.e.id)?.status).toBe('void');
+    expect(s.rounds.find(r => r.event.id === e2.id)?.status).toBe('void');
+    expect(s.payments.get(q.id)?.status).toBe('paid');
+  });
+
   it('a payout lapses after the second round date without being paid', () => {
     const d = dao();
     const p = passedPayout(d, d.T);

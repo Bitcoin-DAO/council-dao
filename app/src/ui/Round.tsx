@@ -8,6 +8,7 @@ import { explorerOf, feePolicyOf, pushPageOf, sourceLabel, suggestFee, txDepth, 
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
 import type { Network } from '../core/config';
 import { mergeSignatures } from '../core/hwkeys';
+import { keptSignature } from '../lib/store';
 import { newTreasuryAddress } from '../core/council';
 import { SeedSignerSign } from './Hw';
 import { buildRound, estimateVsize, finalizeRound, masterFromSeed, memberSignatures, signWithMnemonicKey, type BuiltRound } from '../core/round';
@@ -23,9 +24,22 @@ function feeLine(fee: number, paid: number, policy: 'fast' | 'economical'): stri
   return t('rd.feeShare', { fee: fmtSats(fee), share, aim: t(policy === 'fast' ? 'rd.aimFast' : 'rd.aimEconomical') });
 }
 
+/** Set by "Replace this round": the prepare page opens on a replacement of that round. */
+let replacePreset: string | undefined;
+export function startReplace(roundId: string) {
+  replacePreset = roundId;
+  go('/round/new');
+}
+
 export function PrepareRound() {
   const app = useApp();
   const s = app.dao!;
+  const [replaceId] = useState(() => {
+    const x = replacePreset;
+    replacePreset = undefined;
+    return x;
+  });
+  const [dropped, setDropped] = useState<Set<string>>(new Set());
   const cfg = s.founded!.config;
   const settings = s.settings[s.settings.length - 1].content;
   const max = settings.rules.maxFeeRateSatVb;
@@ -50,14 +64,21 @@ export function PrepareRound() {
   if (!app.isCouncil || !app.secret) return <CouncilOnly />;
 
   const waiting = s.proposals.filter(p => s.payments.get(p.event.id)?.status === 'waiting');
+  // Replacing an open round (protocol 6): its payouts and any approved since, on the same coins; the council
+  // may leave one out (a declined or disputed payout goes back to waiting).
+  const replacing = replaceId ? s.rounds.find(x => x.event.id === replaceId && x.status === 'open' && !x.replacedBy) : undefined;
+  const pool = replacing
+    ? [...replacing.content.proposals.map(id => s.proposals.find(p => p.event.id === id)!).filter(Boolean), ...waiting.filter(p => !replacing.content.proposals.includes(p.event.id))]
+    : waiting;
+  const candidates = pool.filter(p => !dropped.has(p.event.id));
   // A close or a council change moves the whole balance, alone in its round (6.1); a close comes first.
-  const migration = waiting.find(p => p.content.type === 'change_council');
-  const close = waiting.find(p => p.content.type === 'close');
+  const migration = candidates.find(p => p.content.type === 'change_council');
+  const close = candidates.find(p => p.content.type === 'close');
   const sweep = close ?? migration;
   const sweepTo = close ? (close.content.payload.destination as string) : migration ? newTreasuryAddress(migration.content.payload.new_descriptor, cfg.network) : undefined;
-  const list = sweep ? [sweep] : waiting.filter(p => p.content.type === 'payout');
+  const list = sweep ? [sweep] : candidates.filter(p => p.content.type === 'payout');
   const outputs: Output[] = sweep ? [] : list.flatMap(p => p.content.payload.outputs as Output[]);
-  const open = s.rounds.find(r => r.status === 'open');
+  const open = openRound(s);
   const r = Number(rate);
   const rateOk = Number.isFinite(r) && r >= 1 && r <= max;
   const aboveCap = suggested !== undefined && suggested > max;
@@ -73,10 +94,11 @@ export function PrepareRound() {
       const tr = app.treasury!;
       setBuilt(buildRound({
         d: parseDescriptor(settings.descriptor, cfg.network), network: cfg.network, utxos: tr.utxos, outputs, feeRate: r,
-        changeIndex: Math.max(0, tr.changeIndex), sweepTo,
+        changeIndex: Math.max(0, tr.changeIndex), sweepTo, mustSpend: replacing?.inspection?.inputs,
       }));
     } catch (e) {
-      setMsg((e as Error).message === 'insufficient' ? t('rd.insufficient') : errText(e));
+      const m = (e as Error).message;
+      setMsg(m === 'insufficient' ? t('rd.insufficient') : m === 'replace-coins-gone' ? t('rd.replaceGone') : errText(e));
     }
   };
 
@@ -102,9 +124,27 @@ export function PrepareRound() {
     <>
       <Header />
       <main>
-        <h1>{t('rd.prepare')}</h1>
-        <p class="lead">{t('rd.prepareText')}</p>
-        {open && <a class="note" href={`#/round/${open.event.id}`}>{t('rd.openExists')} {t('cn.open')}</a>}
+        <h1>{replacing ? t('rd.replaceTitle', { round: replacing.content.round }) : t('rd.prepare')}</h1>
+        <p class="lead">{replacing ? t('rd.replaceText') : t('rd.prepareText')}</p>
+        {replaceId && !replacing && <p class="warnbox">{t('rd.replaceNoLonger')}</p>}
+        {!replacing && open && <a class="note" href={`#/round/${open.event.id}`}>{t('rd.openExists')} {t('cn.open')}</a>}
+        {replacing && pool.length > 1 && (
+          <div class="card">
+            <h3>{t('rd.replaceChoose')}</h3>
+            {pool.map(p => (
+              <label class="check">
+                <input type="checkbox" checked={!dropped.has(p.event.id)} onChange={e => {
+                  const next = new Set(dropped);
+                  if ((e.target as HTMLInputElement).checked) next.delete(p.event.id);
+                  else next.add(p.event.id);
+                  setDropped(next);
+                  setBuilt(undefined);
+                }} />
+                <span>{proposalLabel(app.site!.name, p.number)} · {p.content.title}{replacing.content.proposals.includes(p.event.id) ? '' : ` · ${t('rd.replaceNew')}`}</span>
+              </label>
+            ))}
+          </div>
+        )}
         {!list.length ? <p class="small">{t('rd.none')}</p> : (
           <>
             <div class="card">
@@ -197,6 +237,13 @@ export function RoundDetail({ id }: { id: string }) {
   const myPerson = app.me?.person;
   const myEntry = myPerson ? settings.council.find(c => s.personOf(c.identityKey) === myPerson) : undefined;
   const iSigned = !!myPerson && r.signatures.has(myPerson);
+  // A signature scanned from the SeedSigner but not published yet (signed out, or the tab reloaded).
+  const keptRaw = keptSignature.get(r.event.id);
+  let kept: string | undefined;
+  try {
+    kept = keptRaw && myEntry && ins && memberSignatures(keptRaw, parseDescriptor(settings.descriptor, cfg.network), cfg.network, myEntry, ins).size ? keptRaw : undefined;
+  } catch { /* not a signature for this round */ }
+  if (keptRaw && iSigned) keptSignature.clear(r.event.id);
   const signers = [...r.signatures.keys()];
   const tk = app.identity?.treasury;
   const run = async (f: () => Promise<unknown>) => {
@@ -288,7 +335,33 @@ export function RoundDetail({ id }: { id: string }) {
           <h3>{t('rd.signatures', { n: signers.length, m: r.threshold })}</h3>
           {signers.length > 0 && <p class="small">{t('rd.signedBy', { names: signers.map(p => nameOf(p)).join(', ') })}</p>}
           {r.declines.map(d => <p class="small">{t('rd.declinedBy', { name: nameOf(d.person), reason: d.reason })}</p>)}
-          {r.status === 'open' && app.isCouncil && app.secret && myEntry && (
+          {r.status === 'open' && r.replacedBy && (
+            <p class="warnbox">{t('rd.replaced')} <a href={`#/round/${r.replacedBy.event.id}`}>{t('rd.replacedLink', { round: r.replacedBy.content.round })}</a></p>
+          )}
+          {r.status === 'open' && !r.replacedBy && !r.ready && app.isCouncil && app.secret && (
+            <details>
+              <summary class="small">{t('rd.replaceAsk')}</summary>
+              <p class="small">{t('rd.replaceExplain')}</p>
+              <button type="button" class="btn secondary" onClick={() => startReplace(r.event.id)}>{t('rd.replace')}</button>
+            </details>
+          )}
+          {r.status === 'open' && !r.replacedBy && !r.ready && myEntry && !iSigned && !app.secret && (
+            <div class="stack">
+              <p class="warnbox">{t(kept ? 'rd.keptSignedOut' : 'rd.signInFirst')}</p>
+              <button type="button" class="btn primary" onClick={() => go('/join')}>{t('nav.signin')}</button>
+            </div>
+          )}
+          {r.status === 'open' && !r.replacedBy && !r.ready && myEntry && !iSigned && app.secret && kept && (
+            <div class="stack">
+              <p class="note">{t('rd.kept')}</p>
+              <button type="button" class="btn primary" disabled={busy} onClick={() => run(async () => {
+                await signAndPublish(KIND.sign, { psbt: kept }, [['e', r.event.id]]);
+                keptSignature.clear(r.event.id);
+              })}>{t('rd.keptPublish')}</button>
+            </div>
+          )}
+          {r.status === 'open' && !r.replacedBy && r.ready && myEntry && !iSigned && <p class="small">{t('rd.notNeeded')}</p>}
+          {r.status === 'open' && !r.replacedBy && !(r.ready && !iSigned) && app.isCouncil && app.secret && myEntry && !(kept && !iSigned) && (
             iSigned ? <p class="ok">{t('rd.signed')}</p> : (
               <>
                 {tk && !app.identity?.wordsChecked ? <p class="warn">{t('words.needed')} <a href="#/profile">{t('words.toProfile')}</a></p>
@@ -300,7 +373,17 @@ export function RoundDetail({ id }: { id: string }) {
                       network={cfg.network}
                       fingerprint={myEntry.fingerprint}
                       check={psbt => memberSignatures(psbt, parseDescriptor(settings.descriptor, cfg.network), cfg.network, myEntry, ins!).size === ins!.inputs.length}
-                      onSigned={async psbt => void (await signAndPublish(KIND.sign, { psbt }, [['e', r.event.id]]))}
+                      onSigned={async psbt => {
+                        // Kept first: if publishing fails (signed out, tab reloaded), the signature is not lost.
+                        keptSignature.set(r.event.id, psbt);
+                        try {
+                          await signAndPublish(KIND.sign, { psbt }, [['e', r.event.id]]);
+                        } catch (e) {
+                          if ((e as Error).message === 'not-signed-in') throw new Error('not-signed-in-kept');
+                          throw e;
+                        }
+                        keptSignature.clear(r.event.id);
+                      }}
                     />
                   )
                   : <p class="small">{t('rd.noKey')} <a href="#/profile">{t('tk.link')}</a></p>}
@@ -321,7 +404,7 @@ export function RoundDetail({ id }: { id: string }) {
               </>
             )
           )}
-          {r.status === 'open' && r.ready && (
+          {r.status === 'open' && !r.replacedBy && r.ready && (
             <>
               <p class="ok">{t('rd.ready')}</p>
               {risen !== undefined && !st?.confirmed && <p class="warnbox">{t('rd.feeRisen', { now: risen, round: r.content.fee_rate_sat_vb })}</p>}
@@ -399,8 +482,9 @@ export function PaymentLine({ id }: { id: string }) {
   return pay.round ? <a class={pay.status === 'paid' ? 'ok' : 'small'} href={`#/round/${pay.round.event.id}`}>{text}</a> : <p class={pay.status === 'lapsed' ? 'warn' : 'small'}>{text}</p>;
 }
 
+/** The round in hand: open, and not replaced by a later round on its coins. */
 export function openRound(s: { rounds: RoundView[] }) {
-  return s.rounds.find(r => r.status === 'open');
+  return s.rounds.find(r => r.status === 'open' && !r.replacedBy);
 }
 
 /** What each source said to a broadcast, and what a chain gateway reported for the services behind it. */

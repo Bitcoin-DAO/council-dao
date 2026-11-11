@@ -97,9 +97,15 @@ export function buildRound(opts: {
   feeRate: number;
   changeIndex: number;
   sweepTo?: string;
+  /** Coins the round must spend: a replacement round spends the open round's coins, so only one can confirm. */
+  mustSpend?: { txid: string; vout: number }[];
 }): BuiltRound {
   const { d, network, feeRate } = opts;
-  const coins = [...opts.utxos].sort((a, b) => b.value - a.value || (a.txid < b.txid ? -1 : 1));
+  const must = new Set((opts.mustSpend ?? []).map(x => `${x.txid}:${x.vout}`));
+  const isMust = (u: Utxo) => must.has(`${u.txid}:${u.vout}`);
+  if ([...must].some(k => !opts.utxos.some(u => `${u.txid}:${u.vout}` === k))) throw new Error('replace-coins-gone');
+  const byValue = (a: Utxo, b: Utxo) => b.value - a.value || (a.txid < b.txid ? -1 : 1);
+  const coins = [...opts.utxos.filter(isMust).sort(byValue), ...opts.utxos.filter(u => !isMust(u)).sort(byValue)];
   let chosen: Utxo[];
   let outputs: RoundOutput[];
   let change: BuiltRound['change'];
@@ -120,6 +126,7 @@ export function buildRound(opts: {
     for (const c of coins) {
       chosen.push(c);
       total += c.value;
+      if (chosen.length < must.size) continue; // the required coins come first, all of them
       const withChange = Math.ceil(estimateVsize(d, chosen.length, [...opts.outputs.map(o => o.address), changeAddr], network) * feeRate);
       const without = Math.ceil(estimateVsize(d, chosen.length, opts.outputs.map(o => o.address), network) * feeRate);
       if (total >= pay + withChange + DUST + 1) break;
