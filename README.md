@@ -4,7 +4,7 @@
 
 **Chain sources:** the DAO's chain gateway first (`btc-dao-gateway`), mempool.space directly as a fallback.
 
-After founding, add `"daoId": "<the DAO id shown on the setup page>"` to `config/dao.json`.
+Founded 11 November 2026; DAO id c2296c84…93725d (in `config/dao.json`).
 
 ---
 
