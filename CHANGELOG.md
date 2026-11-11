@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.5.2 · 11 November 2026
+
+- **No more typing seed words after a lost-key report.** A council member who reported a lost SeedSigner key was told to type the words into the phone if they found them. That advice is gone: if the card or plate turns up, they load it on the SeedSigner and scan its key export (public only) from their profile; a matching fingerprint tells the council the key is back. The lost-key text speaks of the card and plate, not words.
+
 ## v0.5.1 · 11 November 2026
 
 - **Growing the council:** a new council-change reason, **A new council seat** (`expansion`): someone joins, nobody leaves, and the threshold may change in the same proposal (2 of 3 → 3 of 4, say). Choosing it clears and locks "Who leaves". Protocol 4.1.2 updated.

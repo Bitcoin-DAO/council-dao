@@ -206,6 +206,8 @@ async function signRound(a, mb, more = []) {
   await c.getByText('Tessera SeedQR e piastra perse?').click({ timeout: 20000 });
   await c.getByRole('button', { name: 'Avvisa il Consiglio che la mia chiave è persa' }).click({ timeout: 20000 });
   await c.getByText(/Il Consiglio è stato avvisato/).waitFor({ timeout: 15000 });
+  check(!(await c.getByText(/Se ritrovi le parole/).count()) && await seen(c.getByText(/Le parole non si scrivono mai sul telefono/)), 'no advice to type the words');
+  check(await seen(c.getByRole('button', { name: 'Ritrovata: scansiona la chiave dal SeedSigner' })), 'found again: scan the key export');
 
   log('@anna starts the council change from the report');
   await open(a, '#/council');

@@ -1,3 +1,5 @@
+import { readKeyExport } from '../core/hwkeys';
+import { UrScanModal, type Scanned } from './Hw';
 import { useState } from 'preact/hooks';
 import { markWordsChecked, restoreTreasuryKey, signAndPublish, signOut, useApp } from '../app';
 import { KIND } from '../core/events';
@@ -168,30 +170,51 @@ export function Profile() {
 
 /** Report one's own treasury key lost: what that means for the treasury now, and the button. */
 function LostKey({ me }: { me: { person: string } }) {
-  const s = useApp().dao!;
+  const app = useApp();
+  const s = app.dao!;
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>();
   const set = s.settingsAt(s.now).content;
   const others = set.council.length - 1 - s.lostKeys.filter(k => k.person !== me.person).length;
   const mine = set.council.find(c => s.personOf(c.identityKey) === me.person);
   const reported = s.lostKeys.some(k => k.person === me.person);
-  const report = async () => {
+  const hw = mine?.device === 'seedsigner';
+  const [scan, setScan] = useState(false);
+  const publishStatus = async (state: 'lost' | 'found') => {
     setMsg(undefined);
     setBusy(true);
     try {
-      await signAndPublish(KIND.keystatus, { fingerprint: mine!.fingerprint.toLowerCase(), state: 'lost' });
+      await signAndPublish(KIND.keystatus, { fingerprint: mine!.fingerprint.toLowerCase(), state });
     } catch (e) {
       setMsg(errText(e));
     } finally {
       setBusy(false);
     }
   };
+  // Found again: the SeedSigner shows its public key export, and a matching fingerprint proves the key is
+  // back. The words never go into the phone.
+  const onScanned = (v: Scanned) => {
+    setScan(false);
+    try {
+      const k = readKeyExport('text' in v ? v.text : v, app.site!.network);
+      if (k.fingerprint !== mine!.fingerprint.toLowerCase()) return setMsg(t('tk.foundWrong', { fp: mine!.fingerprint }));
+      void publishStatus('found');
+    } catch (e) {
+      setMsg(errText(e));
+    }
+  };
   return (
     <>
-      <p class="small">{t(others >= set.threshold ? 'tk.lostOk' : 'tk.lostLocked', { m: set.threshold, n: set.council.length, others })}</p>
-      {mine && (reported ? <p class="ok">{t('tk.reported')}</p> : (
-        <button type="button" class="btn secondary" disabled={busy} onClick={report}>{t('tk.report')}</button>
+      <p class="small">{t(others >= set.threshold ? (hw ? 'tk.lostOkHw' : 'tk.lostOk') : (hw ? 'tk.lostLockedHw' : 'tk.lostLocked'), { m: set.threshold, n: set.council.length, others })}</p>
+      {mine && (reported ? (
+        <>
+          <p class="ok">{t(hw ? 'tk.reportedHw' : 'tk.reportedPhone')}</p>
+          {hw && <button type="button" class="btn secondary" disabled={busy} onClick={() => setScan(true)}>{t('tk.foundScan')}</button>}
+        </>
+      ) : (
+        <button type="button" class="btn secondary" disabled={busy} onClick={() => publishStatus('lost')}>{t('tk.report')}</button>
       ))}
+      {scan && <UrScanModal title={t('tk.foundScan')} plainOk onCancel={() => setScan(false)} onResult={onScanned} />}
       {msg && <p class="warnbox">{msg}</p>}
     </>
   );
