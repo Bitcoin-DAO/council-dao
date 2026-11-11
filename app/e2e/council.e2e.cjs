@@ -82,6 +82,7 @@ const { Transaction } = require('@scure/btc-signer');
 const WORDS = {
   A: 'process wrestle rigid evoke cash ancient adjust minor size meat puzzle glue',
   B: 'tone define nominee garage idea web soul pizza luggage window tent loud',
+  C: 'life deliver lawn corn chest awkward delay nest lunch cross hobby enroll', // testnet only
   D: 'require sting moon chicken brave loyal plunge mother faint chaos display year', // testnet only
 };
 CARDS.D = '[6b7fa6f3/48h/1h/0h/2h]tpubDDuqyuZ6pjotXF7ksPHZQFmp2R6X8dh9HkTd11T5yri3zegN3EkJzTcTmRvmfpi4Hoknae7JPYy4kHnMPUM8MgJcqVPn5LQSiELtiWuhFz4';
@@ -130,10 +131,10 @@ async function signUpHw(page, name, scanned) {
 }
 
 
-const embitAddr = keys => execFileSync('python3', ['-c', `
+const embitAddr = (keys, m = 2) => execFileSync('python3', ['-c', `
 from embit.descriptor import Descriptor
 from embit.networks import NETWORKS
-d=Descriptor.from_string("wsh(sortedmulti(2,${keys.map(k => CARDS[k] + '/0/*').join(',')}))")
+d=Descriptor.from_string("wsh(sortedmulti(${m},${keys.map(k => CARDS[k] + '/0/*').join(',')}))")
 print(d.derive(0).address(NETWORKS["test"]))`]).toString().trim();
 const txOuts = file => JSON.parse(execFileSync('python3', ['-c', 'import sys,json\nfrom embit.transaction import Transaction\nfrom embit.networks import NETWORKS\nt=Transaction.parse(bytes.fromhex(json.load(open(sys.argv[1]))["hex"]))\nprint(json.dumps({"ins":[i.txid.hex() for i in t.vin],"outs":[[o.script_pubkey.address(NETWORKS["test"]), o.value] for o in t.vout]}))', file]).toString());
 const broadcasts = () => fs.readdirSync(OUT).filter(x => x.startsWith('broadcast-'));
@@ -150,10 +151,11 @@ async function closeVote(a) {
   await open(a, '#/council');
   await a.waitForTimeout(3000);
 }
-async function signRound(a, mb) {
+async function signRound(a, mb, more = []) {
   await a.waitForURL(/#\/round\/[0-9a-f]{64}$/);
   const rid = a.url().split('/round/')[1];
   await signOnDevice(a, rid, 'A');
+  for (const [page, card] of more) await signOnDevice(page, rid, card);
   await signOnDevice(mb, rid, 'B');
   await mb.getByText('Firme sufficienti ✓').waitFor({ timeout: 20000 });
   const before = broadcasts();
@@ -287,7 +289,65 @@ async function signRound(a, mb) {
   check(p.outs.some(o => o[0] === DEST && o[1] === 30000), 'and pays 30000 to the recipient');
   check(/ALL OK/.test(execFileSync('python3', [__dirname + '/embit-check.py', pay.file]).toString()), 'signatures verify with embit');
 
+  log('Growth: @elena joins the council with card C, 2 of 3 → 3 of 4');
+  await open(f, '#/new');
+  await f.getByLabel('Tipo di proposta').selectOption('change_council');
+  await f.getByLabel('Motivo').selectOption('expansion');
+  check(await f.getByLabel('Chi esce dal Consiglio').isDisabled(), 'expansion: nobody leaves');
+  await f.getByLabel('Chi entra nel Consiglio').selectOption({ label: '@elena' });
+  await f.getByLabel('Titolo', { exact: true }).fill('Un quarto posto nel Consiglio');
+  await f.getByLabel('Testo vincolante').fill('@elena entra nel Consiglio; servono 3 firme su 4.');
+  await f.getByRole('button', { name: 'Scansiona la chiave di chi entra' }).click();
+  await paste(f, CARDS.C);
+  await f.getByText('ec03225a ✓').waitFor();
+  await f.getByRole('button', { name: '+', exact: true }).click();
+  check(await seen(f.getByText('3 di 4')), 'threshold 3 of 4');
+  const grownAddr = embitAddr(['A', 'B', 'C', 'D'], 3);
+  const shown2 = (await f.locator('.addr').last().innerText()).replace(/\s+/g, '');
+  check(shown2 === grownAddr, `the new treasury matches embit's 3 of 4 on cards A, B, C, D (${shown2})`);
+  await f.getByRole('button', { name: 'Firma e pubblica' }).click();
+  await f.waitForURL(/#\/p\/[0-9a-f]{64}$/);
+  const pid3 = f.url().split('/p/')[1];
+  check(await seen(f.getByText('Nuovo posto nel Consiglio')), 'proposal page: the reason');
+  await voteAll([A, B, C, F], pid3);
+  await closeVote(a);
+  await open(a, '#/round/new');
+  check(await seen(a.getByText(/Cambio del Consiglio: tutto il saldo/)), 'prepare page: the second migration');
+  await a.getByRole('button', { name: 'Prepara la transazione' }).click({ timeout: 30000 });
+  await a.getByText('Riepilogo').waitFor();
+  await a.getByRole('button', { name: 'Firma e pubblica il giro' }).click();
+  const mig2 = await signRound(a, mb); // the council in force (A, B, D, 2 of 3) signs the move
+  const m2 = txOuts(mig2.file);
+  check(m2.outs.length === 1 && m2.outs[0][0] === grownAddr, 'one output, to the 3-of-4 treasury');
+  const mig2Txid = execFileSync('python3', ['-c', 'import sys,json\nfrom embit.transaction import Transaction\nprint(Transaction.parse(bytes.fromhex(json.load(open(sys.argv[1]))["hex"])).txid().hex())', mig2.file]).toString().trim();
+  check(m2.outs.length === 1 && (await open(a, `#/round/${mig2.rid}`), await seen(a.getByText(/^Confermata nel blocco \d+\.$/), 90000)), 'receipt');
+  await councilAction(a, 'Pubblica la versione 3 delle regole');
+  await councilAction(mb, 'Approva la versione 3 delle regole');
+
+  log('A payout signed by three of four');
+  await open(f, '#/new');
+  await f.getByLabel('Titolo', { exact: true }).fill('Manifesti');
+  await f.getByLabel('Testo vincolante').fill('20 manifesti.');
+  await f.getByLabel('Nome del beneficiario').fill('Tipografia');
+  await f.getByLabel('Indirizzo bitcoin del beneficiario').fill(DEST);
+  await f.getByLabel('Importo in sats').fill('10000');
+  await f.getByLabel(/Sono io il beneficiario/).check();
+  await f.getByRole('button', { name: 'Firma e pubblica' }).click();
+  await f.waitForURL(/#\/p\/[0-9a-f]{64}$/);
+  const pid4 = f.url().split('/p/')[1];
+  await voteAll([A, B, C, F], pid4);
+  await closeVote(a);
+  await open(a, '#/round/new');
+  await a.getByRole('button', { name: 'Prepara la transazione' }).click({ timeout: 30000 });
+  await a.getByText('Riepilogo').waitFor();
+  await a.getByRole('button', { name: 'Firma e pubblica il giro' }).click();
+  const pay2 = await signRound(a, mb, [[f, 'C']]);
+  const q = txOuts(pay2.file);
+  check(q.ins.length === 1 && q.ins[0] === mig2Txid, 'the payout spends from the 3-of-4 treasury');
+  check(/ALL OK/.test(execFileSync('python3', [__dirname + '/embit-check.py', pay2.file]).toString()), 'three signatures verify with embit');
+
   log('History');
+  await open(f, '#/');
   await open(f, '#/');
   await f.locator('nav.footer').getByRole('link', { name: 'Storia' }).click({ timeout: 30000 });
   await f.waitForURL(/#\/history$/);
@@ -296,6 +356,9 @@ async function signRound(a, mb) {
   check(await seen(f.getByText('Motivo: Chiave persa')), 'history: the reason');
   check(await seen(f.getByText('Spostamento della tesoreria:')), 'history: the migration tx');
   check(await seen(f.getByRole('heading', { name: 'Fondata' })), 'history: founded');
+  check(await seen(f.getByText('Motivo: Nuovo posto nel Consiglio')), 'history: the expansion');
+  check(await seen(f.getByText('Entra: @elena (ec03225a).')), 'history: who joined');
+  check(await seen(f.getByText('Firme necessarie: 2/3 → 3/4.')), 'history: the threshold');
   check(await seen(f.getByText(/DAO su testnet/)), 'history: the stage at the top');
   await shot(f, 'history');
 

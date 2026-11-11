@@ -174,7 +174,8 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
   // Say what still stops publishing, instead of a silently disabled button.
   const FIELD: Record<string, Parameters<typeof t>[0]> = {
     title: 'np.titleField', summary: 'np.summary', recipient: 'np.recipient', address: type === 'close' ? 'np.destination' : 'np.address',
-    amount: 'np.amount', link: 'np.link', member_key: 'np.member', reason: 'np.reason', destination: 'np.destination',
+    amount: 'np.amount', link: 'np.link', member_key: 'np.member', reason: type === 'change_council' ? 'cc.reasonFit' : 'np.reason', destination: 'np.destination',
+    in_key: 'cc.inKey', keys: 'cc.in',
   };
   const missing = schemaErr
     ? (FIELD[schemaErr] ? t(FIELD[schemaErr]) : schemaErr)
@@ -329,13 +330,17 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
             <p class="small">{t('cc.intro')}</p>
             <label class="field">
               {t('cc.reason')}
-              <select value={ccReason} onChange={e => setCcReason((e.target as HTMLSelectElement).value as CouncilReason)}>
+              <select value={ccReason} onChange={e => {
+                const r = (e.target as HTMLSelectElement).value as CouncilReason;
+                setCcReason(r);
+                if (r === 'expansion') setCcOut(''); // a new seat: nobody leaves
+              }}>
                 {COUNCIL_REASONS.map(r => <option value={r}>{t(`cc.r.${r}` as 'cc.r.lost_key')}</option>)}
               </select>
             </label>
             <label class="field">
               {t('cc.out')}
-              <select value={ccOut} onChange={e => setCcOut((e.target as HTMLSelectElement).value)}>
+              <select value={ccOut} disabled={ccReason === 'expansion'} onChange={e => setCcOut((e.target as HTMLSelectElement).value)}>
                 <option value="">{t('cc.none')}</option>
                 {cur.council.map(c => <option value={c.identityKey}>{c.label} · {c.fingerprint}</option>)}
               </select>

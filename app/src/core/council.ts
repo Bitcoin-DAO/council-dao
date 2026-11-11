@@ -4,7 +4,7 @@
 import type { CouncilEntry, Network } from './config';
 import { buildDescriptor, checkXpub, parseDescriptor, treasuryAddress } from './descriptor';
 
-export const COUNCIL_REASONS = ['resignation', 'recall', 'lost_key', 'rotation', 'threshold'] as const;
+export const COUNCIL_REASONS = ['resignation', 'recall', 'lost_key', 'rotation', 'threshold', 'expansion'] as const;
 export type CouncilReason = (typeof COUNCIL_REASONS)[number];
 
 export interface CouncilChange {
@@ -30,6 +30,8 @@ export function councilChangeSchemaError(p: Partial<CouncilChange>): string | un
   } else if (typeof p.in_xpub !== 'string' || typeof p.in_fingerprint !== 'string' || !/^[0-9a-f]{8}$/.test(p.in_fingerprint)) return 'in_key';
   if (p.in_device !== undefined && p.in_device !== 'seedsigner') return 'in_device';
   if (p.out_key === null && p.in_key === null && p.reason !== 'threshold') return 'reason';
+  // An expansion adds a seat: someone joins, nobody leaves.
+  if (p.reason === 'expansion' && (p.in_key === null || p.out_key !== null)) return 'reason';
   if (!Number.isInteger(p.threshold) || (p.threshold as number) < 1) return 'threshold';
   if (typeof p.new_descriptor !== 'string') return 'new_descriptor';
   return undefined;

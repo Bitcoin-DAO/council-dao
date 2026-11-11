@@ -2,6 +2,12 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.5.1 · 11 November 2026
+
+- **Growing the council:** a new council-change reason, **A new council seat** (`expansion`): someone joins, nobody leaves, and the threshold may change in the same proposal (2 of 3 → 3 of 4, say). Choosing it clears and locks "Who leaves". Protocol 4.1.2 updated.
+- The form says which combination each reason needs when the choice does not fit.
+- End-to-end: after the lost-key change, a plain member joins the council with card C (2 of 3 → 3 of 4); the second migration is signed by the council then in force, and a payout signed with three cards spends from the 3-of-4 treasury. History shows both changes.
+
 ## v0.5.0 · 10 November 2026
 
 **Council change**: replacing a lost, resigned or recalled treasury key, adding or removing a council member, or changing the threshold. A multisig cannot drop a key, so every change moves the whole treasury to a new one (protocol 4.1.2, 6.1).
