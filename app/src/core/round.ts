@@ -45,7 +45,12 @@ export interface RoundContent {
   psbt: string; // base64, version 0
   fee_rate_sat_vb: number;
   fee_sat: number;
+  /** A sweep round (6.1): the earlier treasury it empties. Carries no proposals. */
+  sweep?: string;
 }
+
+/** How many receive addresses of a treasury a migration or a sweep may pay (6.1): the app picks the first unused. */
+export const RECEIVE_WINDOW = 20;
 
 const DUST = 546;
 const SIG = 72; // DER signature plus sighash byte, upper bound used for estimates

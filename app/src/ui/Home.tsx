@@ -1,4 +1,4 @@
-import { openRound } from './Round';
+import { openRound, openSweeps, startSweep } from './Round';
 import { useEffect, useState } from 'preact/hooks';
 import { chainApis, manualRetryIn, refreshTreasury, useApp } from '../app';
 import { fmtDate, fmtSats, t } from '../i18n';
@@ -9,7 +9,7 @@ import { councilTodo } from './Council';
 import { cadenceOf, roundDatesAfter } from '../core/time';
 import { proposalLabel, type RoundView } from '../core/state';
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
-import { sameWallet } from '../core/descriptor';
+import { sameWallet, walletOf } from '../core/descriptor';
 import { explorerFor, type Movement, type TreasuryView } from '../core/chain';
 
 export function Home() {
@@ -186,6 +186,22 @@ function movementsOf(tr: TreasuryView | undefined): (Movement & { moved?: boolea
   return [...all.values()].sort((a, b) => (b.time ?? Infinity) - (a.time ?? Infinity));
 }
 
+/** For the council: move late arrivals at an earlier treasury into the treasury (a sweep round, 6.1). */
+function SweepAction({ descriptor }: { descriptor: string }) {
+  const app = useApp();
+  const s = app.dao!;
+  if (!app.isCouncil || !app.secret) return null;
+  const council = s.settings[s.settings.length - 1].content.council;
+  let threshold = Infinity;
+  try { threshold = parseDescriptor(descriptor, app.site!.network).threshold; } catch { /* unreadable */ }
+  const keys = council.filter(c => walletOf(descriptor).includes(c.xpub)).length;
+  if (keys < threshold) return <p class="warnbox">{t('home.unsweepable')}</p>;
+  const open = openSweeps(s).find(r => r.content.sweep === descriptor);
+  return open
+    ? <a class="btn secondary" href={`#/round/${open.event.id}`}>{t('home.sweepOpen')}</a>
+    : <button type="button" class="btn secondary" onClick={() => startSweep(descriptor)}>{t('home.sweep')}</button>;
+}
+
 /** An earlier treasury (late arrivals) or the incoming one while the council change is under way. */
 function OtherTreasury({ o, explorer }: { o: NonNullable<TreasuryView['others']>[number]; explorer: string }) {
   const network = useApp().site!.network;
@@ -196,6 +212,7 @@ function OtherTreasury({ o, explorer }: { o: NonNullable<TreasuryView['others']>
       <span class="small" style="font-size:15px">{o.role === 'next' ? t('home.nextTreasury') : t('home.earlierTreasury')}</span>
       {v ? <div class="balance" style="font-size:28px">{fmtSats(v.balance)} <small>sats</small></div> : <p class="small">{t('home.chainError', { msg: o.error ?? '' })}</p>}
       <p class="small">{o.role === 'next' ? t('home.nextTreasuryText') : t('home.earlierTreasuryText')}</p>
+      {o.role === 'earlier' && v && v.balance > 0 && <SweepAction descriptor={o.descriptor} />}
       {v && <a class="small" href={`${explorer}/address/${firstAddress(o.descriptor, network)}`} target="_blank" rel="noopener">{t('home.onExplorer')}</a>}
     </section>
   );

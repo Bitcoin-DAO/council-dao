@@ -526,6 +526,37 @@ describe('payout rounds (6.1-6.3)', () => {
     // The new treasury is the DAO's own: nobody can propose paying to it.
     const self = d.propose(d.f[1], { type: 'payout', payload: { recipient: 'x', outputs: [{ address: dest, amount_sat: 10_000 }] } }, t + 9);
     expect(d.state(t + 10).rejected.find(x => x.event.id === self.id)?.reason).toBe('proposal: pays the treasury');
+
+    // A late payment to the old treasury is swept to the new one (6.1), signed by continuing council keys.
+    const oldDesc = s.settings[0].content.descriptor;
+    const oldD = parseDescriptor(oldDesc, 'testnet4');
+    const late = [{ txid: '9'.repeat(64), vout: 0, value: 50_000, address: treasuryAddress(oldD, 'testnet4', 0, 7).address, branch: 0 as const, index: 7 }];
+    const sweepRound = (to: string, at: number, sweep = oldDesc) => {
+      const r = buildRound({ d: oldD, network: 'testnet4', utxos: late, outputs: [], feeRate: 2, changeIndex: 0, sweepTo: to });
+      return { r, e: d.ev(KIND.round, { round: '2026-12', proposals: [], sweep, psbt: r.psbt, fee_rate_sat_vb: 2, fee_sat: r.fee }, d.c[0], at) };
+    };
+    const newD = parseDescriptor(payload.new_descriptor, 'testnet4');
+    const sw = sweepRound(treasuryAddress(newD, 'testnet4', 0, 1).address, t + 11);
+    const swBad = sweepRound(RECIPIENT, t + 11);
+    const swCur = sweepRound(treasuryAddress(newD, 'testnet4', 0, 1).address, t + 11, payload.new_descriptor);
+    for (const i of [0, 1, 2]) d.ev(KIND.sign, { psbt: signWithMnemonicKey(sw.r.psbt, masters[i]) }, d.c[i], t + 12, [['e', sw.e.id]]);
+    s = d.state(t + 13);
+    const sv = s.rounds.find(x => x.event.id === sw.e.id)!;
+    expect(sv.errors).toEqual([]);
+    expect(sv.isSweep).toBe(true);
+    expect(sv.threshold).toBe(oldD.threshold);
+    expect(sv.ready).toBe(true);
+    expect(s.rounds.find(x => x.event.id === swBad.e.id)!.errors).toContain('a sweep round has one output, to the treasury');
+    expect(s.rounds.find(x => x.event.id === swCur.e.id)!.errors).toContain('a sweep empties an earlier treasury');
+    // A sweep does not block a payout round, nor the other way round.
+    const q = d.propose(d.f[0], { type: 'payout', payload: { recipient: 'Tipografia', outputs: [{ address: RECIPIENT, amount_sat: 10_000 }] } }, t + 14);
+    d.ev(KIND.confirm, { address: RECIPIENT }, newSecret(), t + 15, [['e', q.id]]);
+    for (const i of [0, 1, 2]) d.vote(d.f[i], q, 'yes', t + 15);
+    d.tally(d.c[0], d.state(t + 9 * DAY), q, t + 9 * DAY);
+    const newCoin = [{ txid: fin.txid, vout: 0, value: 590_000, address: dest, branch: 0 as const, index: 0 }];
+    const pr = buildRound({ d: newD, network: 'testnet4', utxos: newCoin, outputs: [{ address: RECIPIENT, amount_sat: 10_000 }], feeRate: 2, changeIndex: 0 });
+    const pe = d.ev(KIND.round, { round: '2026-12', proposals: [q.id], psbt: pr.psbt, fee_rate_sat_vb: 2, fee_sat: pr.fee }, d.c[0], t + 9 * DAY + 1);
+    expect(d.state(t + 9 * DAY + 2).rounds.find(x => x.event.id === pe.id)!.errors).toEqual([]);
   });
 });
 

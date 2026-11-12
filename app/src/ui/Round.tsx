@@ -8,11 +8,11 @@ import { explorerFor, feePolicyOf, pushPageOf, sourceLabel, suggestFee, txDepth,
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
 import type { Network } from '../core/config';
 import { mergeSignatures } from '../core/hwkeys';
-import { sameWallet } from '../core/descriptor';
+import { sameWallet, walletOf } from '../core/descriptor';
 import { keptSignature } from '../lib/store';
 import { newTreasuryAddress } from '../core/council';
 import { SeedSignerSign } from './Hw';
-import { buildRound, estimateVsize, finalizeRound, masterFromSeed, memberSignatures, signWithMnemonicKey, type BuiltRound } from '../core/round';
+import { buildRound, estimateVsize, finalizeRound, masterFromSeed, memberSignatures, RECEIVE_WINDOW, signWithMnemonicKey, type BuiltRound } from '../core/round';
 import { cadenceOf, roundLabel } from '../core/time';
 import { proposalLabel, type Output, type RoundView } from '../core/state';
 import { CouncilOnly, Address, Footer, Header, errText, go, askText } from './parts';
@@ -76,7 +76,10 @@ export function PrepareRound() {
   const migration = candidates.find(p => p.content.type === 'change_council');
   const close = candidates.find(p => p.content.type === 'close');
   const sweep = close ?? migration;
-  const sweepTo = close ? (close.content.payload.destination as string) : migration ? newTreasuryAddress(migration.content.payload.new_descriptor, cfg.network) : undefined;
+  // 6.1: a migration pays the new treasury's first receive address with no history on the chain (read live).
+  const nextView = migration ? app.treasury?.others?.find(o => sameWallet(o.descriptor, migration.content.payload.new_descriptor))?.view : undefined;
+  const migrationTo = nextView && nextView.donationIndex >= 0 && nextView.donationIndex < RECEIVE_WINDOW ? nextView.donationAddress : undefined;
+  const sweepTo = close ? (close.content.payload.destination as string) : migration ? migrationTo : undefined;
   const list = sweep ? [sweep] : candidates.filter(p => p.content.type === 'payout');
   const outputs: Output[] = sweep ? [] : list.flatMap(p => p.content.payload.outputs as Output[]);
   const open = openRound(s);
@@ -84,7 +87,8 @@ export function PrepareRound() {
   const rateOk = Number.isFinite(r) && r >= 1 && r <= max;
   const aboveCap = suggested !== undefined && suggested > max;
   // A reading of the treasury in force: after a council change, an older reading is of the earlier descriptor.
-  const live = !!app.treasury && !app.treasuryLoading && (app.treasuryAt ?? 0) >= opened && !!app.treasury.descriptor && sameWallet(app.treasury.descriptor, settings.descriptor);
+  const live = !!app.treasury && !app.treasuryLoading && (app.treasuryAt ?? 0) >= opened && !!app.treasury.descriptor && sameWallet(app.treasury.descriptor, settings.descriptor)
+    && !(migration && !close && !migrationTo);
   // Known at once from the live reading: is there enough for the payouts and a fee? (TEST DAO, 9 Nov 2026)
   const shortBy = live && !sweep && rateOk ? missingFunds(app.treasury!.utxos.reduce((a, u) => a + u.value, 0), outputs, parseDescriptor(settings.descriptor, cfg.network), app.treasury!.utxos.length, r, cfg.network) : 0;
 
@@ -159,7 +163,7 @@ export function PrepareRound() {
               {migration && sweep === migration && (
                 <>
                   <p class="small">{t('rd.migrationText')}</p>
-                  <Address value={sweepTo!} />
+                  {sweepTo ? <Address value={sweepTo} /> : <p class="small">{t('sw.reading')}</p>}
                 </>
               )}
             </div>
@@ -235,14 +239,18 @@ export function RoundDetail({ id }: { id: string }) {
   if (!r) return <><Header /><main><p class="lead">{t('pd.notFound')}</p></main><Footer /></>;
   const ins = r.inspection;
   const settings = s.settingsAt(r.event.created_at).content;
+  // The treasury this round spends from: an earlier one for a sweep round (6.1).
+  const roundDesc = r.content.sweep ?? settings.descriptor;
   const myPerson = app.me?.person;
-  const myEntry = myPerson ? settings.council.find(c => s.personOf(c.identityKey) === myPerson) : undefined;
+  const councilEntry = myPerson ? settings.council.find(c => s.personOf(c.identityKey) === myPerson) : undefined;
+  // In a sweep, only council members whose key is in that earlier treasury can sign.
+  const myEntry = councilEntry && (!r.isSweep || walletOf(roundDesc).includes(councilEntry.xpub)) ? councilEntry : undefined;
   const iSigned = !!myPerson && r.signatures.has(myPerson);
   // A signature scanned from the SeedSigner but not published yet (signed out, or the tab reloaded).
   const keptRaw = keptSignature.get(r.event.id);
   let kept: string | undefined;
   try {
-    kept = keptRaw && myEntry && ins && memberSignatures(keptRaw, parseDescriptor(settings.descriptor, cfg.network), cfg.network, myEntry, ins).size ? keptRaw : undefined;
+    kept = keptRaw && myEntry && ins && memberSignatures(keptRaw, parseDescriptor(roundDesc, cfg.network), cfg.network, myEntry, ins).size ? keptRaw : undefined;
   } catch { /* not a signature for this round */ }
   if (keptRaw && iSigned) keptSignature.clear(r.event.id);
   const signers = [...r.signatures.keys()];
@@ -267,7 +275,7 @@ export function RoundDetail({ id }: { id: string }) {
     } catch {
       throw new Error(t('rd.badSigned'));
     }
-    const sigs = memberSignatures(psbt, parseDescriptor(settings.descriptor, cfg.network), cfg.network, myEntry!, ins!);
+    const sigs = memberSignatures(psbt, parseDescriptor(roundDesc, cfg.network), cfg.network, myEntry!, ins!);
     if (!sigs.size) throw new Error(t('rd.badSigned'));
     await signAndPublish(KIND.sign, { psbt }, [['e', r.event.id]]);
     setExt(false);
@@ -302,16 +310,18 @@ export function RoundDetail({ id }: { id: string }) {
         <div class="row" style="justify-content:flex-start;gap:8px">
           <span class={r.status === 'paid' ? 'chip teal' : 'chip'}>{t(`rd.status.${r.status}` as 'rd.status.open')}</span>
         </div>
-        <h1>{t('rd.title', { round: r.content.round })}</h1>
+        <h1>{r.isSweep ? t('rd.sweepTitle', { round: r.content.round }) : t('rd.title', { round: r.content.round })}</h1>
+        {r.isSweep && <p class="lead">{t('rd.sweepLead', { m: r.threshold })}</p>}
+        {r.isSweep && councilEntry && !myEntry && <p class="note">{t('rd.sweepNotYourKey')}</p>}
         {r.errors.length > 0 && <p class="warnbox">{t('rd.errors', { list: r.errors.join('; ') })}</p>}
 
-        <section class="card">
+        {!r.isSweep && <section class="card">
           <h3>{t('rd.payouts')}</h3>
           {r.content.proposals.map(pid => {
             const p = s.proposals.find(x => x.event.id === pid);
             return <a href={`#/p/${pid}`}>{p ? `${proposalLabel(app.site!.name, p.number)} · ${p.content.title}` : pid.slice(0, 12)}</a>;
           })}
-        </section>
+        </section>}
 
         {ins && (
           <section class="card">
@@ -321,6 +331,7 @@ export function RoundDetail({ id }: { id: string }) {
               <div class="stack" style="gap:4px">
                 {o.change !== undefined && <span class="chip teal" style="align-self:flex-start">{t('rd.change')}</span>}
                 {r.isMigration && <span class="chip teal" style="align-self:flex-start">{t('rd.newTreasury')}</span>}
+                {r.isSweep && <span class="chip teal" style="align-self:flex-start">{t('rd.toTreasury')}</span>}
                 <Address value={o.address} />
                 <span class="mono">{fmtSats(o.value)} sats</span>
               </div>
@@ -339,7 +350,7 @@ export function RoundDetail({ id }: { id: string }) {
           {r.status === 'open' && r.replacedBy && (
             <p class="warnbox">{t('rd.replaced')} <a href={`#/round/${r.replacedBy.event.id}`}>{t('rd.replacedLink', { round: r.replacedBy.content.round })}</a></p>
           )}
-          {r.status === 'open' && !r.replacedBy && !r.ready && app.isCouncil && app.secret && (
+          {r.status === 'open' && !r.replacedBy && !r.ready && !r.isSweep && app.isCouncil && app.secret && (
             <details>
               <summary class="small">{t('rd.replaceAsk')}</summary>
               <p class="small">{t('rd.replaceExplain')}</p>
@@ -370,10 +381,10 @@ export function RoundDetail({ id }: { id: string }) {
                   : myEntry.device === 'seedsigner' ? (
                     <SeedSignerSign
                       psbt={r.content.psbt}
-                      descriptor={settings.descriptor}
+                      descriptor={roundDesc}
                       network={cfg.network}
                       fingerprint={myEntry.fingerprint}
-                      check={psbt => memberSignatures(psbt, parseDescriptor(settings.descriptor, cfg.network), cfg.network, myEntry, ins!).size === ins!.inputs.length}
+                      check={psbt => memberSignatures(psbt, parseDescriptor(roundDesc, cfg.network), cfg.network, myEntry, ins!).size === ins!.inputs.length}
                       onSigned={async psbt => {
                         // Kept first: if publishing fails (signed out, tab reloaded), the signature is not lost.
                         keptSignature.set(r.event.id, psbt);
@@ -485,7 +496,110 @@ export function PaymentLine({ id }: { id: string }) {
 
 /** The round in hand: open, and not replaced by a later round on its coins. */
 export function openRound(s: { rounds: RoundView[] }) {
-  return s.rounds.find(r => r.status === 'open' && !r.replacedBy);
+  return s.rounds.find(r => r.status === 'open' && !r.replacedBy && !r.isSweep);
+}
+
+/** Open sweep rounds (6.1): they run alongside the payout round. */
+export const openSweeps = (s: { rounds: RoundView[] }) => s.rounds.filter(r => r.status === 'open' && !r.replacedBy && r.isSweep);
+
+/** Set by "Move it to the treasury" on Home: the sweep page opens on that earlier treasury. */
+let sweepPreset: string | undefined;
+export function startSweep(descriptor: string) {
+  sweepPreset = descriptor;
+  go('/sweep');
+}
+
+/**
+ * A sweep round (6.1): what arrived at an earlier treasury after a council change, moved to the current one.
+ * One output, to the current treasury's first unused receive address; signed by council members whose keys are
+ * in the earlier treasury, up to its threshold.
+ */
+export function SweepRound() {
+  const app = useApp();
+  const s = app.dao!;
+  const [descriptor] = useState(() => {
+    const x = sweepPreset;
+    sweepPreset = undefined;
+    return x;
+  });
+  const cfg = s.founded!.config;
+  const settings = s.settings[s.settings.length - 1].content;
+  const max = settings.rules.maxFeeRateSatVb;
+  const apis = chainApis();
+  const [rate, setRate] = useState('');
+  const [built, setBuilt] = useState<BuiltRound>();
+  const [msg, setMsg] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [opened] = useState(() => Date.now());
+  useEffect(() => {
+    void refreshTreasury();
+    suggestFee(apis, feePolicyOf(settings.rules)).then(f => setRate(String(Math.min(f.rate, max)))).catch(() => setRate('2'));
+  }, []);
+  if (!app.isCouncil || !app.secret) return <CouncilOnly />;
+  if (!descriptor) return <><Header /><main><p class="lead">{t('sw.none')}</p></main><Footer /></>;
+  const tr = app.treasury;
+  const fresh = !!tr && !app.treasuryLoading && (app.treasuryAt ?? 0) >= opened && !!tr.descriptor && sameWallet(tr.descriptor, settings.descriptor);
+  const old = tr?.others?.find(o => o.descriptor === descriptor)?.view;
+  const to = fresh && tr!.donationIndex >= 0 && tr!.donationIndex < RECEIVE_WINDOW ? tr!.donationAddress : undefined;
+  const already = openSweeps(s).find(r => r.content.sweep === descriptor);
+  const r = Number(rate);
+  const rateOk = Number.isFinite(r) && r >= 1 && r <= max;
+  const build = () => {
+    setMsg(undefined);
+    try {
+      setBuilt(buildRound({ d: parseDescriptor(descriptor, cfg.network), network: cfg.network, utxos: old!.utxos, outputs: [], feeRate: r, changeIndex: 0, sweepTo: to }));
+    } catch (e) {
+      setMsg((e as Error).message === 'insufficient' ? t('rd.insufficient') : errText(e));
+    }
+  };
+  const publish = async () => {
+    if (!built) return;
+    setBusy(true);
+    setMsg(undefined);
+    try {
+      const { event } = await signAndPublish(KIND.round, {
+        round: roundLabel(s.now, settings.rules.timezone, cadenceOf(settings.rules.payoutRound)), proposals: [], sweep: descriptor, psbt: built.psbt, fee_rate_sat_vb: r, fee_sat: built.fee,
+      });
+      go(`/round/${event.id}`);
+    } catch (e) {
+      setMsg(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Header />
+      <main>
+        <h1>{t('sw.title')}</h1>
+        <p class="lead">{t('sw.text')}</p>
+        {already && <a class="note" href={`#/round/${already.event.id}`}>{t('sw.already')}</a>}
+        {!fresh || !old ? <p class="small">{t('sw.reading')}</p> : old.utxos.length === 0 ? <p class="ok">{t('sw.empty')}</p> : (
+          <>
+            <section class="card">
+              <div class="kv"><span>{t('sw.from')}</span><span class="mono">{fmtSats(old.balance)} sats · {old.utxos.length}</span></div>
+              <span class="small">{t('sw.to')}</span>
+              {to ? <Address value={to} /> : <p class="warnbox">{t('sw.noAddress')}</p>}
+            </section>
+            <label class="field">
+              {t('rd.feeRate', { max })}
+              <input type="number" min={1} max={max} value={rate} onInput={e => (setRate((e.target as HTMLInputElement).value), setBuilt(undefined))} />
+            </label>
+            <button type="button" class="btn secondary" disabled={!rateOk || !to} onClick={build}>{t('rd.build')}</button>
+            {built && (
+              <section class="card">
+                <div class="kv"><span>{t('rd.fee')}</span><span class="mono">{fmtSats(built.fee)} · {r} sat/vB</span></div>
+                <div class="kv"><span>{t('sw.moved')}</span><span class="mono">{fmtSats(old.balance - built.fee)} sats</span></div>
+                <button type="button" class="btn primary" disabled={busy} onClick={publish}>{t('rd.publish')}</button>
+              </section>
+            )}
+          </>
+        )}
+        {msg && <p class="warnbox">{msg}</p>}
+      </main>
+      <Footer />
+    </>
+  );
 }
 
 /** What each source said to a broadcast, and what a chain gateway reported for the services behind it. */

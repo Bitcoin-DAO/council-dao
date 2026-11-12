@@ -1,12 +1,12 @@
 // Rebuilding the DAO from events (protocol 8): genesis, rosters, settings, membership events,
 // proposals, confirmations, votes and tallies. Pure: the same events give the same state everywhere.
 import { Address } from '@scure/btc-signer';
-import type { CouncilEntry, DaoConfig, Rules, SiteConfig } from './config';
+import type { CouncilEntry, DaoConfig, Network, Rules, SiteConfig } from './config';
 import { KIND, byTime, tagValue, verified, type Event } from './events';
-import { btcNetwork, parseDescriptor, treasuryAddress } from './descriptor';
+import { btcNetwork, parseDescriptor, sameWallet, treasuryAddress } from './descriptor';
 import { shortCode } from './shortcode';
 import { hashJson, nowSec, parseJson } from './util';
-import { inspectRound, memberSignatures, type RoundContent, type RoundInspection } from './round';
+import { inspectRound, memberSignatures, RECEIVE_WINDOW, type RoundContent, type RoundInspection } from './round';
 import { cadenceOf, roundDatesAfter } from './time';
 import { buildDiscussion, type Discussion } from './discussion';
 import { councilAfter, councilChangeError, councilChangeSchemaError, type CouncilChange } from './council';
@@ -181,6 +181,8 @@ export interface RoundView {
   isClose: boolean;
   /** A council change's migration: the whole treasury to the new descriptor (6.1). */
   isMigration: boolean;
+  /** A sweep round: late arrivals at an earlier treasury moved to the current one (6.1). */
+  isSweep: boolean;
   status: 'open' | 'paid' | 'void' | 'invalid';
   /** A later round on one of this round's coins (protocol 6, replacement): only one of the two can confirm. */
   replacedBy?: RoundView;
@@ -711,16 +713,19 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       const c = parseJson<RoundContent>(e.content);
       const errors: string[] = [];
       const sv = settingsAt(e.created_at).content;
-      if (!c || !Array.isArray(c.proposals) || !c.proposals.length || typeof c.psbt !== 'string') {
+      const isSweep = !!c && typeof c.sweep === 'string';
+      if (!c || !Array.isArray(c.proposals) || (!c.proposals.length && !isSweep) || (isSweep && c.proposals.length) || typeof c.psbt !== 'string') {
         proposalRejected.push({ event: e, reason: 'round: malformed' });
         continue;
       }
       if (!isCouncilAt(e.pubkey, e.created_at)) errors.push('signer is not on the council');
       if (sv.closed) errors.push('the DAO is closed');
+      // A sweep spends from an earlier treasury (a descriptor of an earlier settings version, not the same wallet).
+      if (isSweep && (!settings.some(v => v.content.descriptor === c.sweep && v.content.version < sv.version) || sameWallet(c.sweep!, sv.descriptor))) errors.push('a sweep empties an earlier treasury');
       let ins: RoundInspection | undefined;
       let d: ReturnType<typeof parseDescriptor> | undefined;
       try {
-        d = parseDescriptor(sv.descriptor, network);
+        d = parseDescriptor(isSweep ? c.sweep! : sv.descriptor, network);
         ins = inspectRound(c.psbt, d, network);
         errors.push(...ins.errors);
       } catch {
@@ -745,11 +750,12 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
           if (props.length !== 1) errors.push('a closing round pays only the close proposal');
           if (ins.outputs.length !== 1 || ins.outputs[0].address !== dest) errors.push('a closing round has one output, to the destination');
         } else if (migration) {
-          // 6.1: the whole balance, minus the fee, to the first receive address of the new descriptor.
-          let dest: string | undefined;
-          try { dest = treasuryAddress(parseDescriptor(migration.content.payload.new_descriptor, network), network, 0, 0).address; } catch { /* reported below */ }
+          // 6.1: the whole balance, minus the fee, to a receive address of the new descriptor (the app picks the
+          // first with no history on the chain; any of the first RECEIVE_WINDOW is valid, so every client can check).
           if (props.length !== 1) errors.push('a migration round pays only the council change');
-          if (!dest || ins.outputs.length !== 1 || ins.outputs[0].address !== dest) errors.push('a migration round has one output, to the new treasury');
+          if (ins.outputs.length !== 1 || !receivesOf(migration.content.payload.new_descriptor, network).has(ins.outputs[0].address)) errors.push('a migration round has one output, to the new treasury');
+        } else if (isSweep) {
+          if (ins.outputs.length !== 1 || !receivesOf(sv.descriptor, network).has(ins.outputs[0].address)) errors.push('a sweep round has one output, to the treasury');
         } else {
           const want = props.flatMap(p => (p?.content.type === 'payout' ? (p.content.payload.outputs as Output[]) : [])).map(o => `${o.address}:${o.amount_sat}`).sort();
           const got = nonChange.map(o => `${o.address}:${o.value}`).sort();
@@ -764,11 +770,13 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         // it is only marked void after this pass (a replaced round, once its replacement is paid).
         const settled = (r: RoundView) => out.some(o => o !== r && o.receipt && o.receipt.created_at <= e.created_at
           && o.inspection?.inputs.some(x => r.inspection?.inputs.some(y => y.txid === x.txid && y.vout === x.vout)));
-        const open = out.filter(r => r.status === 'open' && r.event.created_at <= e.created_at && !(r.receipt && r.receipt.created_at <= e.created_at) && !settled(r));
-        if (open.length && !open.some(r => r.inspection?.inputs.some(x => outpoints.has(`${x.txid}:${x.vout}`)))) errors.push('another round is open');
+        // A sweep round is exempt both ways: it spends an earlier treasury's coins, which no other round touches.
+        const open = out.filter(r => r.status === 'open' && !r.isSweep && r.event.created_at <= e.created_at && !(r.receipt && r.receipt.created_at <= e.created_at) && !settled(r));
+        if (!isSweep && open.length && !open.some(r => r.inspection?.inputs.some(x => outpoints.has(`${x.txid}:${x.vout}`)))) errors.push('another round is open');
       }
 
-      const threshold = sv.threshold;
+      // A sweep needs the earlier treasury's threshold, from current council keys that are in it.
+      const threshold = isSweep && d ? d.threshold : sv.threshold;
       const signatures = new Map<string, Map<number, string>>();
       const signEvents: Event[] = [];
       const declines: RoundView['declines'] = [];
@@ -795,7 +803,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         return tagValue(r, 'e') === e.id && b?.txid === ins!.txid && Number.isInteger(b.block_height) && isCouncilAt(r.pubkey, r.created_at);
       });
       const view: RoundView = {
-        event: e, content: c, inspection: ins, errors, isClose, isMigration: !!migration, signatures, signEvents, declines, ready, threshold, receipt,
+        event: e, content: c, inspection: ins, errors, isClose, isMigration: !!migration, isSweep, signatures, signEvents, declines, ready, threshold, receipt,
         status: errors.length ? 'invalid' : receipt ? 'paid' : 'open',
       };
       if (view.status === 'paid') for (const id of c.proposals) if (!paidAt.has(id)) paidAt.set(id, receipt!.created_at);
@@ -1124,4 +1132,20 @@ export function nextSettings(s: DaoState): SettingsContent | undefined {
     } else for (const ch of p.content.payload.changes as { path: string; to: unknown }[]) rules[ch.path.slice('rules.'.length)] = ch.to;
   }
   return { version: last.content.version + 1, prev: last.hash, basis, rules, closed, council, threshold, descriptor };
+}
+
+const receiveCache = new Map<string, Set<string>>();
+/** The first RECEIVE_WINDOW receive addresses of a descriptor (6.1: where a migration or a sweep may pay). */
+export function receivesOf(desc: string, network: Network): Set<string> {
+  const key = `${network}|${desc}`;
+  let r = receiveCache.get(key);
+  if (!r) {
+    r = new Set();
+    try {
+      const pd = parseDescriptor(desc, network);
+      for (let i = 0; i < RECEIVE_WINDOW; i++) r.add(treasuryAddress(pd, network, 0, i).address);
+    } catch { /* an unreadable descriptor receives nothing */ }
+    receiveCache.set(key, r);
+  }
+  return r;
 }

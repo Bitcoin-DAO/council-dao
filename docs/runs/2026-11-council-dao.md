@@ -57,3 +57,12 @@ Coins: about 5,180 sats left; a top-up of ~10,000 sats makes steps 2 and 4 comfo
 21. **Recall and removal done (v0.6.x):** recall of @CouncilC (COUNCIL-0009) migrated 12,054 sats to the 2-of-3 A, B, C wallet, signed 3 of 4 by @CouncilA, @Member, @CouncilB; settings version 4; member list version 4 cleared @CouncilC's Council mark; @CouncilC removed in member list version 5. Members: 3, all on the council.
 
 **v0.6 result:** replacement round, recall and removal passed in the wild. Fixes found on the way: v0.6.1 (explorer link), v0.6.2 (replaced round blocked the next one), v0.6.3 (Blockbook links), v0.6.4 (same wallet in another key order).
+
+## v0.7.0 plan: sweep an earlier treasury
+
+COUNCIL DAO has two earlier treasuries: A, B, D (2 of 3, after the lost key) and A, B, C, D (3 of 4, after the growth). The council (A, B, C with @Member) can sign from both.
+1. Send ~1,000 sats to an unused address of the A, B, D treasury.
+2. Home shows "Earlier treasury" with the amount and, for the council, **Move it to the treasury**.
+3. The sweep page: the amount, the treasury's first unused address; prepare and publish.
+4. The round page says it is a sweep and needs 2 signatures from A, B (D's holder is off the council). Sign with cards A and B; the SeedSigner loads the A, B, D descriptor in step 1. Broadcast.
+5. After the receipt, Home's earlier-treasury card is gone and the balance includes the sweep.

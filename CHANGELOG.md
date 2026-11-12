@@ -2,6 +2,21 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.7.0 · 12 November 2026
+
+**Sweep rounds** (protocol 6.1)
+- Coins that arrive at an earlier treasury after a council change can be moved into the treasury. On Home, the "Earlier treasury" card offers the council **Move it to the treasury**; the sweep page shows the amount and the treasury's first unused address, builds the round, and publishes it.
+- A sweep round names the earlier treasury it empties and carries no proposals. Its single output goes to the current treasury. It needs that earlier treasury's threshold of signatures, from council members whose keys are in it; the round page says so, and shows the SeedSigner the earlier treasury's descriptor. It runs alongside the payout round: neither blocks the other.
+- When the keys on the council can no longer sign from an earlier treasury, its card says the funds can be recovered only with the keys of those who left.
+- The Council page counts an open sweep a member can sign as a to-do.
+
+**Migration to an unused address** (protocol 6.1 changed)
+- A council change's migration pays to the new treasury's **first receive address with no history on the chain**, read live; any of its first 20 receive addresses is valid, so every client can check a round later. Before, it was always the first address, which had been used before when a council returned to an earlier key set (COUNCIL DAO, finding 17).
+
+**Tests**
+- Unit: a sweep round (valid; wrong destination; the treasury in force refused as "earlier"; the earlier threshold; a payout round alongside it).
+- End-to-end (`e2e/recall.e2e.cjs`): after the recall, a late payment to the old 2-of-3 treasury is swept to the 2-of-2 treasury's first unused address, signed with cards A and B, checked with embit.
+
 ## v0.6.5 · 12 November 2026
 
 - **"Propose a new member" on the Proposals page** too, under New proposal, and as a link from the new-proposal form. It still opens the new-member flow (the candidate's code, the council's check, then the proposal); before, it was only on the profile.

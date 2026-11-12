@@ -25,7 +25,7 @@ import { Confirm } from './ui/Confirm';
 import { Candidate } from './ui/Candidate';
 import { Sponsor } from './ui/Sponsor';
 import { Council } from './ui/Council';
-import { PrepareRound, RoundDetail } from './ui/Round';
+import { PrepareRound, RoundDetail, SweepRound } from './ui/Round';
 import { DiscussionList, NewIdea, ThreadView } from './ui/Discussion';
 import { QrTest } from './ui/Hw';
 
@@ -42,6 +42,7 @@ const routes: Record<string, () => preact.JSX.Element> = {
   '/proposals': Proposals,
   '/new': NewProposal,
   '/sponsor': Sponsor,
+  '/sweep': SweepRound,
   '/council': Council,
   '/round/new': PrepareRound,
   '/discussion': DiscussionList,

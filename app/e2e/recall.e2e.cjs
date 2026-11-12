@@ -131,11 +131,11 @@ async function signUpHw(page, name, scanned) {
 }
 
 
-const embitAddr = (keys, m = 2) => execFileSync('python3', ['-c', `
+const embitAddr = (keys, m = 2, i = 0) => execFileSync('python3', ['-c', `
 from embit.descriptor import Descriptor
 from embit.networks import NETWORKS
 d=Descriptor.from_string("wsh(sortedmulti(${m},${keys.map(k => CARDS[k] + '/0/*').join(',')}))")
-print(d.derive(0).address(NETWORKS["test"]))`]).toString().trim();
+print(d.derive(${i}).address(NETWORKS["test"]))`]).toString().trim();
 const txOuts = file => JSON.parse(execFileSync('python3', ['-c', 'import sys,json\nfrom embit.transaction import Transaction\nfrom embit.networks import NETWORKS\nt=Transaction.parse(bytes.fromhex(json.load(open(sys.argv[1]))["hex"]))\nprint(json.dumps({"ins":[i.txid.hex() for i in t.vin],"outs":[[o.script_pubkey.address(NETWORKS["test"]), o.value] for o in t.vout]}))', file]).toString());
 const broadcasts = () => fs.readdirSync(OUT).filter(x => x.startsWith('broadcast-'));
 async function voteAll(pages, pid) {
@@ -306,6 +306,26 @@ const txid = file => execFileSync('python3', ['-c', 'import sys,json\nfrom embit
     await open(f, `#/p/${pid}`);
     check(await seen(f.getByText(/Pagato|pagato/), 120000), `payout ${pid.slice(0, 6)} paid`);
   }
+
+  log('A late payment to the old treasury (2 of 3, A, B, C) is swept to the 2-of-2 treasury');
+  const lateAddr = embitAddr(['A', 'B', 'C'], 2, 1);
+  const funded = JSON.parse(fs.readFileSync(OUT + '/funded.json', 'utf8'));
+  funded[lateAddr] = { value: 30000, txid: 'ab'.repeat(32) };
+  fs.writeFileSync(OUT + '/funded.json', JSON.stringify(funded));
+  await open(a, '#/');
+  await a.getByText('Tesoreria precedente').waitFor({ timeout: 60000 });
+  await a.getByRole('button', { name: 'Spostali nella tesoreria' }).click({ timeout: 60000 });
+  await a.waitForURL(/#\/sweep$/);
+  const sweepTo = (await a.locator('.addr').first().innerText({ timeout: 60000 })).replace(/\s+/g, '');
+  check(sweepTo === embitAddr(['A', 'B'], 2, 1), `the sweep goes to the treasury's first unused address (${sweepTo})`);
+  await a.getByRole('button', { name: 'Prepara la transazione' }).click();
+  await a.getByRole('button', { name: 'Firma e pubblica il giro' }).click();
+  const sw = await signRound(a, mb);
+  check(await seen(a.getByText(/^Recupero /)), 'the round is a sweep');
+  const so = txOuts(sw.file);
+  check(so.outs.length === 1 && so.outs[0][0] === embitAddr(['A', 'B'], 2, 1) && so.outs[0][1] > 29000, `one output, the late payment less the fee (${so.outs.map(o => o.join(' ')).join(', ')})`);
+  check(so.ins.includes('ab'.repeat(32)), 'it spends the late payment');
+  check(/ALL OK/.test(execFileSync('python3', [__dirname + '/embit-check.py', sw.file]).toString()), 'signatures verify with embit');
 
   log('History');
   await open(f, '#/history');

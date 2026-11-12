@@ -1,5 +1,6 @@
 // Council inbox: counts, member list and rules versions, key replacements, checking candidates.
-import { openRound } from './Round';
+import { openRound, openSweeps } from './Round';
+import { walletOf } from '../core/descriptor';
 import { useState } from 'preact/hooks';
 import { chainSeen, signAndPublish, useApp } from '../app';
 import { fmtSats, t } from '../i18n';
@@ -55,6 +56,9 @@ export function councilTodo(s: DaoState, myPerson: string): number {
   n += liveRekeys(s).filter(r => !r.endorsers.includes(myPerson) && !rekeyBlocked(s, r.oldKey)).length;
   const openR = openRound(s);
   if (openR ? !openR.signatures.has(myPerson) || (openR.ready && !roundOnChain(s)) : [...s.payments.values()].some(p => p.status === 'waiting')) n++;
+  // Open sweeps of an earlier treasury this member's key belongs to (6.1).
+  const mine = s.settings[s.settings.length - 1].content.council.find(c => s.personOf(c.identityKey) === myPerson);
+  n += openSweeps(s).filter(r => !r.ready && !r.signatures.has(myPerson) && !!mine && walletOf(r.content.sweep!).includes(mine.xpub)).length;
   return n;
 }
 
