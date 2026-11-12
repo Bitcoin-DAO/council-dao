@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.7.1 · 12 November 2026
+
+- **"Propose a new member" lives on the Members page** only, under the member count and list version, for members signed in. Removed from the Proposals page and the profile; the new-proposal form's note links to the Members page.
+
 ## v0.7.0 · 12 November 2026
 
 **Sweep rounds** (protocol 6.1)

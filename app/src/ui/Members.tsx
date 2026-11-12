@@ -1,7 +1,7 @@
 import { useApp } from '../app';
 import { fmtDate, t } from '../i18n';
 import { formatShortCode, shortCode } from '../core/shortcode';
-import { Footer, Header } from './parts';
+import { Footer, Header, go } from './parts';
 
 export function Members() {
   const app = useApp();
@@ -15,6 +15,10 @@ export function Members() {
         <h1>{t('members.title')}</h1>
         <p class="small">{t('members.count', { n: members.length, c: council.length })}</p>
         <p class="small">{t('members.version', { v: app.dao!.rosters[app.dao!.rosters.length - 1].content.version })}{app.dao!.pendingRoster.length ? ` · ${t('members.pending', { n: app.dao!.pendingRoster.length })}` : ''}</p>
+        {/* The one place to start adding a member: its own flow (the candidate's code, the council's check, the proposal). */}
+        {!app.dao!.closed && app.me && app.secret && (
+          <button type="button" class="btn secondary" style="align-self:flex-start" onClick={() => go('/sponsor')}>{t('profile.sponsor')}</button>
+        )}
         <div class="card list">
           {[...council, ...members.filter(m => !m.council)].map(m => (
             <div class="row" style="align-items:flex-start">

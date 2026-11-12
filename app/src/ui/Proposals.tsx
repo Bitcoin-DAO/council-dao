@@ -75,8 +75,6 @@ export function Proposals() {
           <h1>{t('props.title')}</h1>
           {!app.dao!.closed && app.me && app.secret && <button type="button" class="btn dark" onClick={() => go('/new')}>{t('props.new')}</button>}
         </div>
-        {/* A new member goes through its own flow (the candidate's code, the council's check), started from here too. */}
-        {!app.dao!.closed && app.me && app.secret && <button type="button" class="btn link" style="align-self:flex-start" onClick={() => go('/sponsor')}>{t('profile.sponsor')} →</button>}
         {list.length === 0 && <p class="small">{t('props.none')}</p>}
         {list.map(p => <ProposalCard p={p} />)}
       </main>

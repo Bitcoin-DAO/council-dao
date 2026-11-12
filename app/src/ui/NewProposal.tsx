@@ -233,7 +233,7 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
             {TYPES.map(x => <option value={x}>{typeLabel(x)}</option>)}
           </select>
         </label>
-        <p class="small">{t('np.sponsorHint')} <button type="button" class="btn link" style="display:inline;padding:0" onClick={() => go('/sponsor')}>{t('profile.sponsor')} →</button></p>
+        <p class="small">{t('np.sponsorHint')} <a href="#/members">{t('members.title')} →</a></p>
         <label class="field">{t('np.titleField')}<input type="text" maxLength={80} value={title} onInput={e => setTitle((e.target as HTMLInputElement).value)} /></label>
         <label class="field">
           {t('np.summary')}

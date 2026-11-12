@@ -160,7 +160,12 @@ async function councilAction(page, buttonName) {
   await n.getByRole('button', { name: 'Copia il codice' }).click();
   const ninaCode = await copied(n);
   await shot(n, '03-candidate-wait');
-  await open(f2, '#/sponsor');
+  // The new-member flow starts from the Members page (and only there).
+  await open(f2, '#/proposals');
+  check(!(await f2.getByRole('button', { name: /Proponi un nuovo membro/ }).count()), 'not on the Proposals page');
+  await open(f2, '#/members');
+  await f2.getByRole('button', { name: 'Proponi un nuovo membro' }).click();
+  await f2.waitForURL(/#\/sponsor$/);
   await f2.getByRole('button', { name: 'Scansiona il codice del candidato' }).click();
   await paste(f2, ninaCode);
   await f2.getByText(/In attesa della verifica/).waitFor();
@@ -231,6 +236,7 @@ async function councilAction(page, buttonName) {
   // The app's own confirmation dialog, in the app's language.
   await f2.locator('.dialog').getByRole('button', { name: 'Lascia la DAO' }).click();
   await f2.getByText('Hai lasciato UNO.').waitFor({ timeout: 15000 });
+  await open(f2, '#/members');
   check(!(await f2.getByRole('button', { name: 'Proponi un nuovo membro' }).count()), 'a former member is offered no member actions');
   await councilAction(a, 'Pubblica la versione 3');
   await councilAction(B.page, 'Approva la versione 3');

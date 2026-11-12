@@ -146,9 +146,6 @@ export function Profile() {
             {payMsg && <p class="warnbox">{payMsg}</p>}
           </div>
         )}
-        {app.secret && !former && (
-          <button type="button" class="btn secondary" onClick={() => go('/sponsor')}>{t('profile.sponsor')}</button>
-        )}
         {app.secret && !me.council && !former && (
           <div class="card">
             <h3>{t('profile.leave')}</h3>
