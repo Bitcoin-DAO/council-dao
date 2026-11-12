@@ -49,3 +49,4 @@
 
 Coins: about 5,180 sats left; a top-up of ~10,000 sats makes steps 2 and 4 comfortable.
 15. **v0.6.0:** replacement round worked (COUNCIL-0007 declined, replaced with COUNCIL-0007 + 0008 "approved since" on the same 10,000-sat coin). Recall of @CouncilC (COUNCIL-0009) passed and waits for the payout round. The round's transaction link said "not found" while the round showed "known to 2 of 3 sources": it opened the first source's explorer, which did not have it yet. Fixed in v0.6.1 (link to a source that knows it).
+16. **Replacement paid; the migration round after it was "Not valid: another round is open".** The replaced (declined) round still counted as open in the one-round check, which ran before replaced rounds are marked void. Fixed in v0.6.2 (unit test added); the published migration round becomes valid.

@@ -760,7 +760,11 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         if (ins.fee / ins.vsize > sv.rules.maxFeeRateSatVb + 0.01 || c.fee_rate_sat_vb > sv.rules.maxFeeRateSatVb) errors.push('fee rate above the cap');
         // one open round at a time, unless this one replaces it by spending one of its coins
         const outpoints = new Set(ins.inputs.map(x => `${x.txid}:${x.vout}`));
-        const open = out.filter(r => r.status === 'open' && r.event.created_at <= e.created_at && !(r.receipt && r.receipt.created_at <= e.created_at));
+        // A round whose coin a confirmed round (by then) has spent can never confirm: it is not open, even though
+        // it is only marked void after this pass (a replaced round, once its replacement is paid).
+        const settled = (r: RoundView) => out.some(o => o !== r && o.receipt && o.receipt.created_at <= e.created_at
+          && o.inspection?.inputs.some(x => r.inspection?.inputs.some(y => y.txid === x.txid && y.vout === x.vout)));
+        const open = out.filter(r => r.status === 'open' && r.event.created_at <= e.created_at && !(r.receipt && r.receipt.created_at <= e.created_at) && !settled(r));
         if (open.length && !open.some(r => r.inspection?.inputs.some(x => outpoints.has(`${x.txid}:${x.vout}`)))) errors.push('another round is open');
       }
 

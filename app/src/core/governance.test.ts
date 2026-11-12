@@ -431,6 +431,12 @@ describe('payout rounds (6.1-6.3)', () => {
     expect(s.rounds.find(r => r.event.id === first.e.id)?.status).toBe('void');
     expect(s.rounds.find(r => r.event.id === e2.id)?.status).toBe('void');
     expect(s.payments.get(q.id)?.status).toBe('paid');
+    // the next round is not blocked by the replaced ones (COUNCIL DAO, 12 November 2026)
+    const r4 = buildRound({ d: desc, network: 'testnet4', utxos: coins(d).slice(1), outputs: [{ address: RECIPIENT, amount_sat: 120_000 }], feeRate: 2, changeIndex: 1 });
+    const e4 = d.ev(KIND.round, { round: '2026-12', proposals: [p.id], psbt: r4.psbt, fee_rate_sat_vb: 2, fee_sat: r4.fee }, d.c[0], t2 + 8);
+    s = d.state(t2 + 9);
+    expect(s.rounds.find(r => r.event.id === e4.id)?.errors).toEqual([]);
+    expect(s.rounds.find(r => r.event.id === e4.id)?.status).toBe('open');
   });
 
   it('a payout lapses after the second round date without being paid', () => {

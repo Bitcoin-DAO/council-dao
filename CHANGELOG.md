@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.6.2 · 12 November 2026
+
+- **Fixed: after a replaced round, the next round was refused ("another round is open").** A replaced round becomes void once its replacement is confirmed, but the check that only one round is open ran before that was worked out, so the replaced round still counted as open. Found on COUNCIL DAO: the council-change migration after a replacement was marked "Not valid". A round whose coin a confirmed round has already spent no longer counts as open. The migration round already published becomes valid with this version; nothing needs preparing again.
+
 ## v0.6.1 · 12 November 2026
 
 - The transaction link on a round opens the explorer of a chain source that already knows the transaction. Before, it always opened the first source's explorer, which answered "not found" until that source had the transaction too (seen on COUNCIL DAO while the round showed "known to 2 of 3 sources").
