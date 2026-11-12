@@ -5,6 +5,7 @@ import { fmtSats, t } from '../i18n';
 import { KIND } from '../core/events';
 import { DUST, proposalSchemaError, validAddress, type Output, type ProposalContent, type ProposalType } from '../core/state';
 import type { DraftContent } from '../core/discussion';
+import { maxScheduleDays, maxTranches, scheduleRulesError, scheduleShapeError, type Tranche } from '../core/delivery';
 import { COUNCIL_REASONS, sweepable, councilAfter, councilChangeError, descriptorFor, type CouncilChange, type CouncilReason } from '../core/council';
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
 import { readKeyExport } from '../core/hwkeys';
@@ -53,6 +54,9 @@ function fieldsOf(c?: DraftContent) {
     member: (p.member_key as string) ?? '',
     reason: (p.reason as string) ?? '',
     rule: (change?.path?.replace(/^rules\./, '') ?? 'votingPeriodDays') as (typeof EDITABLE_RULES)[number],
+    bounty: p.bounty === true,
+    tranches: ((p.schedule as Tranche[] | undefined) ?? []).map(x => ({ amount: String(x.amount_sat), days: String(x.due_days) })),
+    report: p.report === 'requested',
     value: change?.to !== undefined && change?.to !== null ? String(change.to) : '',
   };
 }
@@ -93,6 +97,10 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
   const [reason, setReason] = useState(init.reason);
   const [rule, setRule] = useState<(typeof EDITABLE_RULES)[number]>(init.rule);
   const [value, setValue] = useState(init.value);
+  // 4.6: a bounty (its own choice in the list; a payout with an open recipient), tranches, a report request.
+  const [bounty, setBounty] = useState(init.bounty);
+  const [tranches, setTranches] = useState<{ amount: string; days: string }[]>(init.tranches.length ? init.tranches : []);
+  const [reportReq, setReportReq] = useState(init.report);
   const [msg, setMsg] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -128,7 +136,10 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
 
   const addr = address.trim();
   const addrError = addr && (!validAddress(addr, network) ? t('np.addressBad', { network }) : s.isTreasuryAddress(addr) ? t('np.addressTreasury') : undefined);
-  const amt = Number(amount);
+  const staged = type === 'payout' && (bounty || tranches.length > 0);
+  const schedule: Tranche[] = tranches.map(x => ({ amount_sat: Number(x.amount), due_days: Number(x.days) }));
+  const scheduleTotal = schedule.reduce((a, x) => a + (Number.isFinite(x.amount_sat) ? x.amount_sat : 0), 0);
+  const amt = staged ? scheduleTotal : Number(amount);
   const amtError = amount && !(Number.isInteger(amt) && amt > DUST) ? t('np.amountBad', { dust: DUST }) : undefined;
   const stored = s.rules?.[rule];
   // A rule missing from older settings shows its default; the change records what is actually stored.
@@ -142,7 +153,16 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
   })();
 
   let payload: Record<string, unknown> = {};
-  if (type === 'payout') payload = { recipient: recipient.trim(), outputs: [{ address: addr, amount_sat: amt, ...(forMember ? { member: forMember } : {}) }] };
+  if (type === 'payout') {
+    payload = bounty
+      ? { recipient: '', outputs: [], bounty: true, schedule }
+      : { recipient: recipient.trim(), outputs: [{ address: addr, amount_sat: amt, ...(forMember ? { member: forMember } : {}) }], ...(staged ? { schedule } : reportReq ? { report: 'requested' } : {}) };
+  }
+  const limitTranches = maxTranches(s.rules ?? ({} as never));
+  const limitDays = maxScheduleDays(s.rules ?? ({} as never));
+  const scheduleErr = staged ? (schedule.length === 0 ? t('np.trancheNone') : scheduleShapeError(schedule) ? t('np.trancheBad', { dust: DUST }) : scheduleRulesError(schedule, s.rules ?? ({} as never)) ? t('np.trancheLimits', { n: limitTranches, d: limitDays }) : undefined) : undefined;
+  // Approving a schedule reserves no coins: warn when the promises would exceed what the treasury holds (4.6.5).
+  const overCommitted = staged && app.treasury && s.committed + scheduleTotal > app.treasury.balance;
   if (type === 'remove_member') payload = { member_key: member, reason: reason.trim() };
   if (type === 'change_rules') payload = { changes: [{ path: `rules.${rule}`, from: stored ?? null, to: parsedValue }] };
   if (type === 'close') payload = { destination: addr };
@@ -180,7 +200,7 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
   const missing = schemaErr
     ? (FIELD[schemaErr] ? t(FIELD[schemaErr]) : schemaErr)
     : type === 'change_rules' && parsedValue === undefined ? t('np.newValue') : undefined;
-  const ok = !schemaErr && !addrError && !amtError && !(cc && 'error' in cc) && !(type === 'change_rules' && (parsedValue === undefined || parsedValue === current || (rule === 'payoutRound' && parsedValue === cadenceOf(current))));
+  const ok = !schemaErr && !scheduleErr && !addrError && !amtError && !(cc && 'error' in cc) && !(type === 'change_rules' && (parsedValue === undefined || parsedValue === current || (rule === 'payoutRound' && parsedValue === cadenceOf(current))));
 
   // A draft version may be partial: only the title is required, and wrong values are still flagged.
   const draftOk = !!title.trim() && !addrError && !amtError;
@@ -197,7 +217,7 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
         return;
       }
       const { event } = await signAndPublish(KIND.proposal, content);
-      if (iAm && !(type === 'payout' && payee && payeeStanding?.address === addr) && (type === 'payout' || type === 'close')) await signAndPublish(KIND.confirm, { address: addr }, [['e', event.id]]);
+      if (iAm && !bounty && !(type === 'payout' && payee && payeeStanding?.address === addr) && (type === 'payout' || type === 'close')) await signAndPublish(KIND.confirm, { address: addr }, [['e', event.id]]);
       go(`/p/${event.id}`);
     } catch (e) {
       setMsg(errText(e));
@@ -225,12 +245,16 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
         {draftId && <p class="small">{t('ds.versionHint')}</p>}
         <label class="field">
           {t('np.type')}
-          <select value={type} onChange={e => {
-            const v = (e.target as HTMLSelectElement).value as ProposalType;
+          <select value={type === 'payout' && bounty ? 'bounty' : type} onChange={e => {
+            const raw = (e.target as HTMLSelectElement).value;
+            const v = (raw === 'bounty' ? 'payout' : raw) as ProposalType;
+            setBounty(raw === 'bounty');
+            if (raw === 'bounty' && !tranches.length) setTranches([{ amount: '', days: '30' }]);
+            if (raw === 'payout' && bounty) setTranches([]);
             setType(v);
             if (v === 'close' && returnOk && !address.trim()) setAddress(returnTo!.address);
           }} style="min-height:48px;border:1px solid var(--field);border-radius:8px;padding:0 12px;font:inherit;font-size:16px;background:#fff">
-            {TYPES.map(x => <option value={x}>{typeLabel(x)}</option>)}
+            {TYPES.flatMap(x => (x === 'payout' ? [<option value="payout">{typeLabel('payout')}</option>, <option value="bounty">{t('np.bounty')}</option>] : [<option value={x}>{typeLabel(x)}</option>]))}
           </select>
         </label>
         <p class="small">{t('np.sponsorHint')} <a href="#/members">{t('members.title')} →</a></p>
@@ -242,7 +266,16 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
         </label>
         {!draftId && <label class="field">{t('np.link')}<input type="text" inputMode="url" placeholder="https://" value={link} onInput={e => setLink((e.target as HTMLInputElement).value)} /></label>}
 
-        {type === 'payout' && (
+        {type === 'payout' && bounty && (
+          <div class="card">
+            <p class="small">{t('np.bountyText')}</p>
+            <TrancheEditor tranches={tranches} setTranches={setTranches} max={limitTranches} maxDays={limitDays} practice={(s.rules?.votingPeriodDays ?? 7) < 1} />
+            {scheduleErr && <p class="error">{scheduleErr}</p>}
+            {overCommitted && <p class="warnbox">{t('np.overCommitted', { committed: fmtSats(s.committed), balance: fmtSats(app.treasury!.balance) })}</p>}
+          </div>
+        )}
+
+        {type === 'payout' && !bounty && (
           <div class="card">
             <label class="field">
               {t('np.forMember')}
@@ -258,9 +291,22 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
               payeeStanding?.address === addr ? <p class="ok">{t('np.standingUsed', { name: payee.name })}</p>
                 : <p class="small">{t(payeeStanding ? 'np.standingOther' : 'np.noStanding', { name: payee.name })}</p>
             )}
-            <label class="field">{t('np.amount')}<input type="text" inputMode="numeric" value={amount} onInput={e => setAmount((e.target as HTMLInputElement).value.replace(/[^\d]/g, ''))} /></label>
-            {amount && !amtError && <span class="small">{fmtSats(amt)} sats</span>}
-            {amtError && <p class="error">{amtError}</p>}
+            <label class="check"><input type="checkbox" checked={staged} onChange={e => setTranches((e.target as HTMLInputElement).checked ? [{ amount: amount, days: '30' }] : [])} />{t('np.staged')}</label>
+            {staged ? (
+              <>
+                <TrancheEditor tranches={tranches} setTranches={setTranches} max={limitTranches} maxDays={limitDays} practice={(s.rules?.votingPeriodDays ?? 7) < 1} />
+                {scheduleTotal > 0 && <span class="small">{t('np.trancheTotal', { sats: fmtSats(scheduleTotal) })}</span>}
+                {scheduleErr && <p class="error">{scheduleErr}</p>}
+                {overCommitted && <p class="warnbox">{t('np.overCommitted', { committed: fmtSats(s.committed), balance: fmtSats(app.treasury!.balance) })}</p>}
+              </>
+            ) : (
+              <>
+                <label class="field">{t('np.amount')}<input type="text" inputMode="numeric" value={amount} onInput={e => setAmount((e.target as HTMLInputElement).value.replace(/[^\d]/g, ''))} /></label>
+                {amount && !amtError && <span class="small">{fmtSats(amt)} sats</span>}
+                {amtError && <p class="error">{amtError}</p>}
+                <label class="check"><input type="checkbox" checked={reportReq} onChange={e => setReportReq((e.target as HTMLInputElement).checked)} />{t('np.reportRequested')}</label>
+              </>
+            )}
             {!draftId && !(payee && payeeStanding?.address === addr) && (
               <>
                 <label class="check"><input type="checkbox" checked={iAm} onChange={e => setIAm((e.target as HTMLInputElement).checked)} />{t('np.iAmRecipient')}</label>
@@ -418,5 +464,26 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
       </main>
       <Footer />
     </>
+  );
+}
+
+/** The schedule of a staged payout or a bounty (4.6.1): amounts in sats, due dates in days after approval. */
+function TrancheEditor(props: { tranches: { amount: string; days: string }[]; setTranches: (x: { amount: string; days: string }[]) => void; max: number; maxDays: number; practice: boolean }) {
+  const { tranches, setTranches } = props;
+  const set = (k: number, f: 'amount' | 'days', v: string) => setTranches(tranches.map((x, i) => (i === k ? { ...x, [f]: v.replace(/[^\d]/g, '') } : x)));
+  return (
+    <div class="stack" style="gap:8px">
+      <span class="small">{t('np.trancheHint', { n: props.max, d: props.maxDays })}{props.practice ? ` ${t('np.tranchePractice')}` : ''}</span>
+      {tranches.map((x, k) => (
+        <div class="row" style="gap:8px;align-items:flex-end">
+          <label class="field" style="flex:2">{t('np.trancheAmount', { n: k + 1 })}<input type="text" inputMode="numeric" value={x.amount} onInput={e => set(k, 'amount', (e.target as HTMLInputElement).value)} /></label>
+          <label class="field" style="flex:1">{t('np.trancheDays')}<input type="text" inputMode="numeric" value={x.days} onInput={e => set(k, 'days', (e.target as HTMLInputElement).value)} /></label>
+          {tranches.length > 1 && <button type="button" class="btn link" aria-label={t('np.trancheRemove')} onClick={() => setTranches(tranches.filter((_, i) => i !== k))}>✕</button>}
+        </div>
+      ))}
+      {tranches.length < props.max && (
+        <button type="button" class="btn link" style="align-self:flex-start" onClick={() => setTranches([...tranches, { amount: '', days: String(Math.min(props.maxDays, (Number(tranches[tranches.length - 1]?.days) || 0) + 30)) }])}>{t('np.trancheAdd')}</button>
+      )}
+    </div>
   );
 }

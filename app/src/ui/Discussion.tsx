@@ -4,7 +4,8 @@ import { signAndPublish, useApp } from '../app';
 import { fmtDateTime, fmtSats, t } from '../i18n';
 import { KIND } from '../core/events';
 import { POST_MAX, timeline, type DraftContent, type DraftVersion, type Thread } from '../core/discussion';
-import { proposalLabel, proposalSchemaError, type Output, type ProposalContent } from '../core/state';
+import { proposalLabel, proposalSchemaError, type DaoState, type Output, type ProposalContent } from '../core/state';
+import type { ReportView } from '../core/delivery';
 import { Footer, Header, askConfirm, errText, go } from './parts';
 import { statusText, typeLabel, useNameOf } from './Proposals';
 
@@ -45,6 +46,11 @@ export function DiscussionList() {
   const daoId = app.daoId!;
   const nameOf = useNameOf();
   const me = app.me?.person;
+  // 4.6: reports are read here: a chip on the thread, and a filter that lists only threads with reports.
+  const [only, setOnly] = useState(false);
+  const reportsOf = (th: (typeof s.discussion.threads)[number]) => (th.proposal ? s.reports.get(th.proposal.event.id) ?? [] : []);
+  const lastReport = (th: (typeof s.discussion.threads)[number]) => Math.max(0, ...reportsOf(th).map(r => r.event.created_at));
+  const shown = only ? s.discussion.threads.filter(th => reportsOf(th).length).sort((a, b) => lastReport(b) - lastReport(a)) : s.discussion.threads;
   return (
     <>
       <Header />
@@ -52,9 +58,13 @@ export function DiscussionList() {
         <h1>{t('ds.title')}</h1>
         <p class="small">{t('ds.intro')}</p>
         {app.me && app.secret && !s.closed && <button type="button" class="btn primary" onClick={() => go('/discussion/new')}>{t('ds.newIdea')}</button>}
-        {s.discussion.threads.length === 0 ? <p class="small">{t('ds.none')}</p> : (
+        <div class="row" style="justify-content:flex-start;gap:8px">
+          <button type="button" class={only ? 'btn link' : 'chip teal'} onClick={() => setOnly(false)}>{t('ds.all')}</button>
+          <button type="button" class={only ? 'chip teal' : 'btn link'} onClick={() => setOnly(true)}>{t('ds.reports')}</button>
+        </div>
+        {shown.length === 0 ? <p class="small">{only ? t('ds.noReports') : t('ds.none')}</p> : (
           <div class="stack" style="gap:10px">
-            {s.discussion.threads.map(th => {
+            {shown.map(th => {
               const fresh = newCount(th, daoId, me, s.personOf);
               return (
                 <a class="card" style="text-decoration:none;color:inherit;gap:6px" href={`#/d/${th.id}`}>
@@ -62,6 +72,7 @@ export function DiscussionList() {
                     {th.proposal && <span class="mono small">{proposalLabel(app.site!.name, th.proposal.number)}</span>}
                     <span class={th.status === 'open' ? 'chip teal' : 'chip'}>{chip(th, s.now)}</span>
                     {fresh > 0 && <span class="chip new">{t('ds.new', { n: fresh })}</span>}
+                    {reportChip(th, s)}
                   </div>
                   <strong style="font-size:17px">{th.title}</strong>
                   <span class="small">{t('ds.meta', { name: nameOf(s.keyOf(th.author)), posts: th.posts.length, date: fmtDateTime(th.lastActivity) })}</span>
@@ -272,9 +283,15 @@ export function ThreadView({ id }: { id: string }) {
         <button type="button" class="btn secondary" onClick={share}>{shared ? t('home.copied') : t('ds.share')}</button>
 
         <h2>{t('ds.timeline')}</h2>
-        {timeline(th).length === 0 && <p class="small">{t('ds.empty')}</p>}
+        {withReports(th, s).length === 0 && <p class="small">{t('ds.empty')}</p>}
         <div class="stack" style="gap:10px">
-          {timeline(th).map(x => x.kind === 'version' ? (
+          {withReports(th, s).map(x => x.kind === 'report' ? (
+            <div class="card tint" style="gap:4px">
+              <span class="small"><strong>{t('ds.reportCard', { n: x.r.tranche })}</strong> · {nameOf(x.r.event.pubkey)} · {fmtDateTime(x.r.event.created_at)}{paidReport(x.r, th, s) ? ` · ${t('dl.st.paid')}` : ''}</span>
+              <p style="white-space:pre-wrap;margin:0;overflow-wrap:anywhere">{linkify(x.r.text)}</p>
+              {x.r.link && <a href={x.r.link} target="_blank" rel="noopener noreferrer">{t('pd.link')} ↗</a>}
+            </div>
+          ) : x.kind === 'version' ? (
             x.v === latest ? <p class="small">{t('ds.versionAt', { n: x.v.n, date: fmtDateTime(x.v.event.created_at) })} ↑</p> : <VersionCard v={x.v} th={th} />
           ) : (
             <div class="post">
@@ -304,4 +321,31 @@ export function ThreadView({ id }: { id: string }) {
 function linkify(text: string) {
   const parts = text.split(/(https?:\/\/[^\s<>"]+)/g);
   return parts.map((p, i) => (i % 2 === 1 ? <a href={p} target="_blank" rel="noopener noreferrer nofollow">{p}</a> : p));
+}
+
+type ThreadT = Thread;
+
+/** The thread's entries with the proposal's delivery reports (4.6.3) among them, in time order. */
+function withReports(th: ThreadT, s: DaoState) {
+  const reports = th.proposal ? s.reports.get(th.proposal.event.id) ?? [] : [];
+  const items = [
+    ...timeline(th).map(x => ({ ...x, at: x.kind === 'version' ? x.v.event.created_at : x.event.created_at })),
+    ...reports.map(r => ({ kind: 'report' as const, r, at: r.event.created_at })),
+  ];
+  return items.sort((a, b) => a.at - b.at);
+}
+
+/** Whether a round paid the tranche this report is for, after it. */
+function paidReport(r: ReportView, th: ThreadT, s: DaoState) {
+  const v = th.proposal ? s.payments.get(th.proposal.event.id)?.tranches?.[r.tranche - 1] : undefined;
+  return v?.status === 'paid';
+}
+
+/** "Report 2 of 3", or "Report" on a payout with a requested report. */
+function reportChip(th: ThreadT, s: DaoState) {
+  const reports = th.proposal ? s.reports.get(th.proposal.event.id) ?? [] : [];
+  if (!reports.length) return null;
+  const of = (th.proposal!.content.payload.schedule as unknown[] | undefined)?.length;
+  const n = Math.max(...reports.map(r => r.tranche));
+  return <span class="chip teal">{of ? t('ds.reportChip', { n, of }) : t('ds.reportOne')}</span>;
 }

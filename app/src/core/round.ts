@@ -47,6 +47,8 @@ export interface RoundContent {
   fee_sat: number;
   /** A sweep round (6.1): the earlier treasury it empties. Carries no proposals. */
   sweep?: string;
+  /** 4.6: for a scheduled payout, the tranche this round pays (counted from 1). */
+  tranches?: Record<string, number>;
 }
 
 /** How many receive addresses of a treasury a migration or a sweep may pay (6.1): the app picks the first unused. */

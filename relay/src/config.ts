@@ -18,7 +18,7 @@ export const AUTH_TIMEOUT_MS = 600000; // 10 minutes - how long the challenge is
 // Relay info
 export const relayInfo: RelayInfo = {
   name: "btc-dao relay",
-  description: "Relay for btc-dao DAOs. Accepts only the DAO's own events, kinds 3570-3590 with its D tag, and keeps all of them.",
+  description: "Relay for btc-dao DAOs. Accepts only the DAO's own events, kinds 3570-3592 with its D tag, and keeps all of them.",
   pubkey: "",
   contact: "https://github.com/Bitcoin-DAO/btc-dao",
   supported_nips: [1, 11, 12, 16, 20],
@@ -106,15 +106,15 @@ export const blockedEventKinds = new Set<number>([]);
 
 // Allowed event kinds
 // Add comma-separated kinds Ex: 1, 2, 3
-// btc-dao: only the DAO's kinds, 3570-3590 (protocol.md section 7.3)
+// btc-dao: only the DAO's kinds, 3570-3592 (protocol.md sections 2, 7.3)
 export const allowedEventKinds = new Set<number>(
-  Array.from({ length: 3590 - 3570 + 1 }, (_, i) => 3570 + i)
+  Array.from({ length: 3592 - 3570 + 1 }, (_, i) => 3570 + i)
 );
 
 // btc-dao: discussion drafts and posts (3587, 3588) come from members, but the relay
 // does not know the member list; phones show members' posts only. This limit, per
 // key and kept across connections, stops one key from filling the relay.
-export const DISCUSSION_KINDS = new Set<number>([3587, 3588]);
+export const DISCUSSION_KINDS = new Set<number>([3587, 3588, 3591, 3592]); // drafts, posts, reports, claims
 export const DISCUSSION_RATE_LIMIT = { rate: 10 / 60000, capacity: 20 }; // 10 a minute, bursts of 20
 
 // btc-dao: every event must carry ["D", <dao_id>]. Leave the list empty until

@@ -336,6 +336,102 @@ describe('payout rounds (6.1-6.3)', () => {
     return { e, r };
   }
 
+  // ---------- paid on delivery (4.6) ----------
+  const addrOf = (i: number) => p2wpkh(secp256k1.getPublicKey(hexToBytes(String(i).padStart(2, '0').repeat(32)), true), TEST_NETWORK).address!;
+  function trancheRound(d: ReturnType<typeof dao>, id: string, n: number, address: string, amount: number, at: number, utxos = coins(d)) {
+    const desc = parseDescriptor(d.state(d.T).settings[0].content.descriptor, 'testnet4');
+    const r = buildRound({ d: desc, network: 'testnet4', utxos, outputs: [{ address, amount_sat: amount }], feeRate: 2, changeIndex: 0 });
+    const e = d.ev(KIND.round, { round: '2026-12', proposals: [id], tranches: { [id]: n }, psbt: r.psbt, fee_rate_sat_vb: 2, fee_sat: r.fee }, d.c[0], at);
+    return { e, r };
+  }
+  function pay(d: ReturnType<typeof dao>, e: { id: string }, r: { psbt: string }, at: number, height = 101) {
+    for (const i of [0, 1, 2]) d.ev(KIND.sign, { psbt: signWithMnemonicKey(r.psbt, masters[i]) }, d.c[i], at, [['e', e.id]]);
+    const fin = finalizeRound([0, 1, 2].map(i => signWithMnemonicKey(r.psbt, masters[i])));
+    d.ev(KIND.receipt, { txid: fin.txid, block_height: height }, d.c[0], at + 1, [['e', e.id]]);
+    return fin;
+  }
+
+  it('staged payout (4.6): the schedule, a report before each tranche, the next tranche only, lapse stops the rest', () => {
+    const d = dao();
+    const schedule = [{ amount_sat: 100_000, due_days: 14 }, { amount_sat: 200_000, due_days: 45 }];
+    const bad1 = d.propose(d.f[0], { type: 'payout', payload: { recipient: 'Tipografia', outputs: [{ address: RECIPIENT, amount_sat: 250_000 }], schedule } }, d.T);
+    const bad2 = d.propose(d.f[0], { type: 'payout', payload: { recipient: 'Tipografia', outputs: [{ address: RECIPIENT, amount_sat: 5 * 600 }], schedule: [1, 2, 3, 4, 5].map(k => ({ amount_sat: 600, due_days: k })) } }, d.T);
+    const bad3 = d.propose(d.f[0], { type: 'payout', payload: { recipient: 'Tipografia', outputs: [{ address: RECIPIENT, amount_sat: 1000 }], schedule: [{ amount_sat: 1000, due_days: 91 }] } }, d.T);
+    const p = d.propose(d.f[0], { type: 'payout', payload: { recipient: 'Tipografia', outputs: [{ address: RECIPIENT, amount_sat: 300_000 }], schedule } }, d.T + 1);
+    let s = d.state(d.T + 2);
+    const why = (e: { id: string }) => s.rejected.find(x => x.event.id === e.id)?.reason;
+    expect(why(bad1)).toBe('proposal: schedule total');
+    expect(why(bad2)).toBe('proposal: more than 4 tranches');
+    expect(why(bad3)).toBe('proposal: schedule longer than 90 days');
+    d.ev(KIND.confirm, { address: RECIPIENT }, newSecret(), d.T + 2, [['e', p.id]]);
+    for (const i of [0, 1, 2]) d.vote(d.f[i], p, 'yes', d.T + 2);
+    d.tally(d.c[0], d.state(d.T + 8 * DAY), p, d.T + 8 * DAY);
+    const t = d.T + 8 * DAY + 10;
+    s = d.state(t);
+    expect(s.payments.get(p.id)?.status).toBe('awaiting_report');
+    expect(s.committed).toBe(300_000);
+    const early = trancheRound(d, p.id, 1, RECIPIENT, 100_000, t);
+    s = d.state(t + 1);
+    expect(s.rounds.find(r => r.event.id === early.e.id)!.errors).toContain(`proposal ${s.proposals.find(x => x.event.id === p.id)!.number}: tranche 1 has no report`);
+    const stranger = d.ev(KIND.report, { tranche: 1, text: 'fatto' }, d.f[1], t + 2, [['e', p.id]]);
+    d.ev(KIND.report, { tranche: 1, text: 'Stampati i primi 200 volantini.' }, d.f[0], t + 3, [['e', p.id]]);
+    s = d.state(t + 4);
+    expect(s.rejected.find(x => x.event.id === stranger.id)?.reason).toBe('report: not the proposer, the paid member or a claimant');
+    expect(s.payments.get(p.id)?.status).toBe('waiting');
+    expect(s.payments.get(p.id)?.tranches?.[0].status).toBe('reported');
+    const wrongN = trancheRound(d, p.id, 2, RECIPIENT, 200_000, t + 5);
+    const r1 = trancheRound(d, p.id, 1, RECIPIENT, 100_000, t + 6, coins(d).slice(1));
+    s = d.state(t + 7);
+    expect(s.rounds.find(r => r.event.id === wrongN.e.id)!.errors.join()).toContain('tranche 2 is not the next to pay');
+    expect(s.rounds.find(r => r.event.id === r1.e.id)!.errors).toEqual([]);
+    pay(d, r1.e, r1.r, t + 8);
+    s = d.state(t + 10);
+    const pm = s.payments.get(p.id)!;
+    expect(pm.tranches?.[0].status).toBe('paid');
+    expect(pm.tranche).toBe(2);
+    expect(pm.status).toBe('awaiting_report');
+    expect(s.committed).toBe(200_000);
+    // No report for tranche 2 by the first round date after day 45: it lapses, and with it the schedule.
+    s = d.state(d.T + 8 * DAY + 90 * DAY);
+    expect(s.payments.get(p.id)?.status).toBe('lapsed');
+    expect(s.payments.get(p.id)?.tranches?.[1].status).toBe('lapsed');
+    expect(s.committed).toBe(0);
+  });
+
+  it('bounty (4.6): members claim, report, and the council round chooses whom to pay', () => {
+    const d = dao();
+    const p = d.propose(d.f[0], { type: 'payout', payload: { recipient: '', outputs: [], bounty: true, schedule: [{ amount_sat: 50_000, due_days: 30 }] } }, d.T);
+    const bad = d.propose(d.f[0], { type: 'payout', payload: { recipient: 'x', outputs: [], bounty: true, schedule: [{ amount_sat: 50_000, due_days: 30 }] } }, d.T);
+    const early = d.ev(KIND.claim, { address: addrOf(31) }, d.f[1], d.T + 1, [['e', p.id]]);
+    for (const i of [0, 1, 2]) d.vote(d.f[i], p, 'yes', d.T + 2);
+    d.tally(d.c[0], d.state(d.T + 8 * DAY), p, d.T + 8 * DAY);
+    const t = d.T + 8 * DAY + 10;
+    d.ev(KIND.claim, { address: addrOf(31) }, d.f[1], t, [['e', p.id]]);
+    d.ev(KIND.claim, { address: addrOf(32) }, d.f[2], t, [['e', p.id]]);
+    const outsider = d.ev(KIND.claim, { address: addrOf(33) }, newSecret(), t, [['e', p.id]]);
+    const noClaim = d.ev(KIND.report, { tranche: 1, text: 'fatto io' }, d.f[3], t + 1, [['e', p.id]]);
+    d.ev(KIND.report, { tranche: 1, text: 'Sito tradotto in inglese.' }, d.f[1], t + 1, [['e', p.id]]);
+    d.ev(KIND.report, { tranche: 1, text: 'Traduzione completa, con glossario.' }, d.f[2], t + 1, [['e', p.id]]);
+    let s = d.state(t + 2);
+    const why = (e: { id: string }) => s.rejected.find(x => x.event.id === e.id)?.reason;
+    expect(why(bad)).toBe('proposal: bounty');
+    expect(why(early)).toBe('claim: before the tally');
+    expect(why(outsider)).toBe('claim: signer is not a member');
+    expect(why(noClaim)).toBe('report: not the proposer, the paid member or a claimant');
+    expect(s.claims.get(p.id)?.length).toBe(2);
+    expect(s.payments.get(p.id)?.status).toBe('waiting'); // no recipient confirmation: the claim is the address
+    const toStranger = trancheRound(d, p.id, 1, addrOf(33), 50_000, t + 3);
+    const r = trancheRound(d, p.id, 1, addrOf(32), 50_000, t + 4, coins(d).slice(1));
+    s = d.state(t + 5);
+    expect(s.rounds.find(x => x.event.id === toStranger.e.id)!.errors.join()).toContain('the bounty does not pay a claimant who reported');
+    expect(s.rounds.find(x => x.event.id === r.e.id)!.errors).toEqual([]);
+    pay(d, r.e, r.r, t + 6);
+    s = d.state(t + 8);
+    expect(s.payments.get(p.id)?.status).toBe('paid');
+    expect(s.payments.get(p.id)?.tranches?.[0].address).toBe(addrOf(32));
+    expect(s.committed).toBe(0);
+  });
+
   it('signs a round with 3 council keys, finalises it and is paid on receipt', () => {
     const d = dao();
     const p = passedPayout(d, d.T);

@@ -27,6 +27,8 @@ export const KIND = {
   post: 3588,
   withdraw: 3589,
   keystatus: 3590,
+  report: 3591,
+  claim: 3592,
 } as const;
 
 export const ALL_KINDS = Object.values(KIND);

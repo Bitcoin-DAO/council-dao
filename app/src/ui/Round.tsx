@@ -14,7 +14,7 @@ import { newTreasuryAddress } from '../core/council';
 import { SeedSignerSign } from './Hw';
 import { buildRound, estimateVsize, finalizeRound, masterFromSeed, memberSignatures, RECEIVE_WINDOW, signWithMnemonicKey, type BuiltRound } from '../core/round';
 import { cadenceOf, roundLabel } from '../core/time';
-import { proposalLabel, type Output, type RoundView } from '../core/state';
+import { proposalLabel, type Output, type ProposalView, type RoundView } from '../core/state';
 import { CouncilOnly, Address, Footer, Header, errText, go, askText } from './parts';
 import { useNameOf } from './Proposals';
 
@@ -41,6 +41,8 @@ export function PrepareRound() {
     return x;
   });
   const [dropped, setDropped] = useState<Set<string>>(new Set());
+  const [pick, setPick] = useState<Record<string, string>>({});
+  const nameOf = useNameOf();
   const cfg = s.founded!.config;
   const settings = s.settings[s.settings.length - 1].content;
   const max = settings.rules.maxFeeRateSatVb;
@@ -81,7 +83,27 @@ export function PrepareRound() {
   const migrationTo = nextView && nextView.donationIndex >= 0 && nextView.donationIndex < RECEIVE_WINDOW ? nextView.donationAddress : undefined;
   const sweepTo = close ? (close.content.payload.destination as string) : migration ? migrationTo : undefined;
   const list = sweep ? [sweep] : candidates.filter(p => p.content.type === 'payout');
-  const outputs: Output[] = sweep ? [] : list.flatMap(p => p.content.payload.outputs as Output[]);
+  // 4.6: a scheduled payout pays its next tranche; a bounty, the claimant the council picks among those who reported.
+  const trancheOf = (p: ProposalView) => s.payments.get(p.event.id)?.tranche;
+  const bountyOptions = (p: ProposalView, n: number) => {
+    const claims = s.claims.get(p.event.id) ?? [];
+    const firstPaid = s.payments.get(p.event.id)?.tranches?.[0];
+    if (n > 1 && firstPaid?.address) return claims.filter(c => c.address === firstPaid.address);
+    const reporters = new Set((s.reports.get(p.event.id) ?? []).filter(r => r.tranche === n).map(r => r.person));
+    return claims.filter(c => reporters.has(c.person));
+  };
+  const outputOf = (p: ProposalView): Output[] => {
+    const pl = p.content.payload;
+    if (!Array.isArray(pl.schedule)) return pl.outputs as Output[];
+    const n = trancheOf(p) ?? 1;
+    const amount = (pl.schedule as { amount_sat: number }[])[n - 1].amount_sat;
+    if (pl.bounty !== true) return [{ address: (pl.outputs as Output[])[0].address, amount_sat: amount }];
+    const opts = bountyOptions(p, n);
+    const c = opts.find(o => o.person === pick[p.event.id]) ?? opts[0];
+    return c ? [{ address: c.address, amount_sat: amount }] : [];
+  };
+  const outputs: Output[] = sweep ? [] : list.flatMap(outputOf);
+  const tranchesOf = Object.fromEntries(list.filter(p => Array.isArray(p.content.payload.schedule)).map(p => [p.event.id, trancheOf(p) ?? 1]));
   const open = openRound(s);
   const r = Number(rate);
   const rateOk = Number.isFinite(r) && r >= 1 && r <= max;
@@ -113,7 +135,7 @@ export function PrepareRound() {
     setBusy(true);
     try {
       const { event } = await signAndPublish(KIND.round, {
-        round: roundLabel(s.now, settings.rules.timezone, cadenceOf(settings.rules.payoutRound)), proposals: list.map(p => p.event.id), psbt: built.psbt, fee_rate_sat_vb: r, fee_sat: built.fee,
+        round: roundLabel(s.now, settings.rules.timezone, cadenceOf(settings.rules.payoutRound)), proposals: list.map(p => p.event.id), ...(Object.keys(tranchesOf).length ? { tranches: tranchesOf } : {}), psbt: built.psbt, fee_rate_sat_vb: r, fee_sat: built.fee,
       });
       const tk = signingKey();
       if (tk) await signAndPublish(KIND.sign, { psbt: signWithMnemonicKey(built.psbt, masterFromSeed(mnemonicToSeedSync(tk.mnemonic), cfg.network)) }, [['e', event.id]]);
@@ -154,12 +176,27 @@ export function PrepareRound() {
           <>
             <div class="card">
               <h3>{t('rd.payouts')}</h3>
-              {list.map(p => (
-                <div class="kv">
-                  <a href={`#/p/${p.event.id}`}>{proposalLabel(app.site!.name, p.number)} · {p.content.title}</a>
-                  <span class="mono">{p.content.type !== 'payout' ? '—' : fmtSats((p.content.payload.outputs as Output[]).reduce((a, o) => a + o.amount_sat, 0))}</span>
-                </div>
-              ))}
+              {list.map(p => {
+                const n = Array.isArray(p.content.payload.schedule) ? trancheOf(p) ?? 1 : undefined;
+                const opts = p.content.payload.bounty === true ? bountyOptions(p, n!) : [];
+                return (
+                  <div class="stack" style="gap:4px">
+                    <div class="kv">
+                      <a href={`#/p/${p.event.id}`}>{proposalLabel(app.site!.name, p.number)} · {p.content.title}{n ? ` · ${t('rd.trancheN', { n, of: (p.content.payload.schedule as unknown[]).length })}` : ''}</a>
+                      <span class="mono">{p.content.type !== 'payout' ? '—' : fmtSats(outputOf(p).reduce((a, o) => a + o.amount_sat, 0))}</span>
+                    </div>
+                    {opts.length > 1 && (
+                      <label class="field">
+                        {t('rd.bountyPick')}
+                        <select value={pick[p.event.id] ?? opts[0].person} onChange={e => (setPick({ ...pick, [p.event.id]: (e.target as HTMLSelectElement).value }), setBuilt(undefined))}>
+                          {opts.map(o => <option value={o.person}>{nameOf(o.person)}</option>)}
+                        </select>
+                      </label>
+                    )}
+                    {opts.length === 1 && <span class="small">{t('rd.bountyTo', { name: nameOf(opts[0].person) })}</span>}
+                  </div>
+                );
+              })}
               {migration && sweep === migration && (
                 <>
                   <p class="small">{t('rd.migrationText')}</p>
@@ -319,7 +356,8 @@ export function RoundDetail({ id }: { id: string }) {
           <h3>{t('rd.payouts')}</h3>
           {r.content.proposals.map(pid => {
             const p = s.proposals.find(x => x.event.id === pid);
-            return <a href={`#/p/${pid}`}>{p ? `${proposalLabel(app.site!.name, p.number)} · ${p.content.title}` : pid.slice(0, 12)}</a>;
+            const n = r.content.tranches?.[pid];
+            return <a href={`#/p/${pid}`}>{p ? `${proposalLabel(app.site!.name, p.number)} · ${p.content.title}${n ? ` · ${t('rd.trancheN', { n, of: (p.content.payload.schedule as unknown[] | undefined)?.length ?? n })}` : ''}` : pid.slice(0, 12)}</a>;
           })}
         </section>}
 

@@ -1,6 +1,6 @@
 # COUNCIL DAO
 
-**This is COUNCIL DAO's own copy of [btc-dao](https://github.com/Bitcoin-DAO/btc-dao) on testnet4,** founded on SeedSigner keys to try council changes (v0.5.1): card C plays a lost key and card D replaces it, then a plain member joins with card C (2 of 3 → 3 of 4). 2 of 3, practice votes. It runs btc-dao v0.7.1 (commit e04e4d5). The site is at **https://bitcoin-dao.github.io/council-dao** and is built from `config/dao.json` by `.github/workflows/pages.yml`. Code changes are made in btc-dao and pulled in here; only `config/dao.json` and this note are its own (the charter is UNO DAO's, as a stand-in).
+**This is COUNCIL DAO's own copy of [btc-dao](https://github.com/Bitcoin-DAO/btc-dao) on testnet4,** founded on SeedSigner keys to try council changes (v0.5.1): card C plays a lost key and card D replaces it, then a plain member joins with card C (2 of 3 → 3 of 4). 2 of 3, practice votes. It runs btc-dao v0.8.0 (commit 2b92e29). The site is at **https://bitcoin-dao.github.io/council-dao** and is built from `config/dao.json` by `.github/workflows/pages.yml`. Code changes are made in btc-dao and pulled in here; only `config/dao.json` and this note are its own (the charter is UNO DAO's, as a stand-in).
 
 **Chain sources:** the DAO's chain gateway first (`btc-dao-gateway`), mempool.space directly as a fallback.
 

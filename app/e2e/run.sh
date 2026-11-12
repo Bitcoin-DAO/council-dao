@@ -1,7 +1,7 @@
 #!/bin/bash
 # End-to-end tests: a local relay (relay/ under wrangler), a mock chain API, the built app, Playwright.
 # Needs: npm install in app/ and relay/, Playwright with Chromium, ffmpeg (camera test).
-# Usage: bash e2e/run.sh [founding|governance|payouts|discussion|closing|hw|seedsigner|council|recall|all]
+# Usage: bash e2e/run.sh [founding|governance|payouts|discussion|closing|hw|seedsigner|council|recall|delivery|all]
 #   CHAIN=blockbook: the mock chain answers as Blockbook only
 #   CHAIN=gateway: the app reads the mock chain only through the chain gateway (gateway/ under wrangler)
 set -e
@@ -74,6 +74,14 @@ if [ "$WHICH" = all ] || [ "$WHICH" = council ]; then
   sleep 1
   start_gateway
   node "$HERE/council.e2e.cjs"
+fi
+if [ "$WHICH" = all ] || [ "$WHICH" = delivery ]; then
+  start_relay
+  kill_matching "esplora-mock"
+  node "$HERE/esplora-mock.mjs" > "$OUT/esplora.log" 2>&1 &
+  sleep 1
+  start_gateway
+  node "$HERE/delivery.e2e.cjs"
 fi
 if [ "$WHICH" = all ] || [ "$WHICH" = recall ]; then
   start_relay

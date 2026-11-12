@@ -9,6 +9,7 @@ import { formatShortCode, shortCode } from '../core/shortcode';
 import { parseJson } from '../core/util';
 import { Address, Footer, Header, errText, go } from './parts';
 import { PaymentLine } from './Round';
+import { Delivery } from './Delivery';
 import { cadenceOf } from '../core/time';
 
 export const typeLabel = (type: string) => t(`type.${type}` as 'type.payout');
@@ -176,6 +177,8 @@ export function ProposalDetail({ id }: { id: string }) {
           {p.status === 'passed' && <InForceLine id={p.event.id} />}
         </section>
 
+        <Delivery p={p} />
+
         {p.addresses.length > 0 && (
           <section class="card">
             {p.addresses.map(a => (
@@ -265,6 +268,15 @@ function Payload({ p }: { p: ProposalView }) {
   const pl = c.payload;
   switch (c.type) {
     case 'payout':
+      if (pl.bounty === true) {
+        const total = (pl.schedule as { amount_sat: number }[]).reduce((a, x) => a + x.amount_sat, 0);
+        return (
+          <>
+            <div class="kv"><span>{t('pd.recipient')}</span><span>{t('np.bounty')}</span></div>
+            <div class="kv"><span>{t('pd.amount')}</span><span class="mono">{fmtSats(total)} sats</span></div>
+          </>
+        );
+      }
       return (
         <>
           <div class="kv"><span>{t('pd.recipient')}</span><span>{pl.recipient}</span></div>

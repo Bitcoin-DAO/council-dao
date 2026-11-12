@@ -155,7 +155,6 @@ export function Profile() {
             )}
           </div>
         )}
-        {me.council && <p class="small">{t('profile.councilLeave')}</p>}
         {app.secret && !app.identity?.plain && (
           <button type="button" class="btn secondary" onClick={() => (signOut(), go('/'))}>{t('profile.signout')}</button>
         )}

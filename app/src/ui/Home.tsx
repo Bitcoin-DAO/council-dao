@@ -41,6 +41,7 @@ export function Home() {
             <>
               <div class="balance">{fmtSats(tr.balance)} <small>sats</small></div>
               {tr.unconfirmed !== 0 && <span class="small">{t('home.unconfirmed', { amount: fmtSats(tr.unconfirmed) })}</span>}
+              {app.dao!.committed > 0 && <span class="small">{t('home.committed', { amount: fmtSats(app.dao!.committed) })}</span>}
               {cfg.network !== 'mainnet' && <span class="small">{t('home.testValue')}</span>}
               <span class="small">
                 {app.treasuryAt && t('home.readAt', { time: fmtTime(app.treasuryAt, app.lang) })}

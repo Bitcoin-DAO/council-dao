@@ -6,6 +6,7 @@ import { KIND, byTime, tagValue, verified, type Event } from './events';
 import { btcNetwork, parseDescriptor, sameWallet, treasuryAddress } from './descriptor';
 import { shortCode } from './shortcode';
 import { hashJson, nowSec, parseJson } from './util';
+import { maxScheduleDays, REPORT_MAX, scheduleDay, scheduleRulesError, scheduleShapeError, type ClaimView, type ReportView, type Tranche, type TrancheView } from './delivery';
 import { inspectRound, memberSignatures, RECEIVE_WINDOW, type RoundContent, type RoundInspection } from './round';
 import { cadenceOf, roundDatesAfter } from './time';
 import { buildDiscussion, type Discussion } from './discussion';
@@ -195,12 +196,15 @@ export interface RoundView {
   receipt?: Event;
 }
 
-export type PaymentStatus = 'unconfirmed' | 'waiting' | 'in_round' | 'paid' | 'lapsed';
+export type PaymentStatus = 'unconfirmed' | 'awaiting_report' | 'waiting' | 'in_round' | 'paid' | 'lapsed';
 
 export interface Payment {
   status: PaymentStatus;
   round?: RoundView;
   lapseAt?: number;
+  /** A scheduled payout (4.6): its tranches, and the one a round pays next. */
+  tranches?: TrancheView[];
+  tranche?: number;
 }
 
 export interface DaoState {
@@ -225,6 +229,11 @@ export interface DaoState {
   pendingSettings: string[];
   rounds: RoundView[];
   payments: Map<string, Payment>; // passed payouts and closes
+  /** 4.6: delivery reports and bounty claims, per proposal. */
+  reports: Map<string, ReportView[]>;
+  claims: Map<string, ClaimView[]>;
+  /** Approved tranches neither paid nor lapsed (4.6.5). */
+  committed: number;
   closed: boolean;
   keywraps: Map<string, { pubkey: string; nonce: string; ct: string; at: number }>;
   /** Council treasury keys their holders have reported lost (dao.keystatus), for the keys in the current settings. */
@@ -295,8 +304,16 @@ export function proposalSchemaError(c: ProposalContent, network: DaoConfig['netw
   if (!p || typeof p !== 'object') return 'payload';
   switch (c.type) {
     case 'payout':
+      if (p.report !== undefined && p.report !== 'requested') return 'report';
+      if (p.schedule !== undefined && scheduleShapeError(p.schedule)) return scheduleShapeError(p.schedule);
+      if (p.bounty !== undefined) {
+        // 4.6: a bounty's recipient is open; its amounts are in the schedule, its address comes from a claim.
+        if (p.bounty !== true || p.recipient !== '' || !Array.isArray(p.outputs) || p.outputs.length || !p.schedule) return 'bounty';
+        return;
+      }
       if (!isStr(p.recipient, 80)) return 'recipient';
       if (!Array.isArray(p.outputs) || p.outputs.length < 1 || p.outputs.length > 10) return 'outputs';
+      if (p.schedule && (p.outputs.length !== 1 || (p.schedule as Tranche[]).reduce((a, t) => a + t.amount_sat, 0) !== (p.outputs as Output[])[0]?.amount_sat)) return 'schedule total';
       for (const o of p.outputs as Output[]) {
         if (!validAddress(o?.address, network)) return 'address';
         if (!Number.isInteger(o.amount_sat) || o.amount_sat <= DUST) return 'amount';
@@ -376,7 +393,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
     now, founded, pending: founded ? [] : candidates, conflict: foundedAll.length > 1,
     rosters: [], settings: [], rosterCandidates: [], settingsCandidates: [], rosterDisputed: false, settingsDisputed: false,
     members: [], proposals: [], verifies: [], rekeys: [], leaves: new Map(), pendingRoster: [], pendingSettings: [],
-    rounds: [], payments: new Map(), lostKeys: [], discussion: { threads: [], byId: new Map(), ofProposal: new Map() }, closed: false,
+    rounds: [], payments: new Map(), reports: new Map(), claims: new Map(), committed: 0, lostKeys: [], discussion: { threads: [], byId: new Map(), ofProposal: new Map() }, closed: false,
     keywraps: new Map(), rejected,
     personOf: k => k, keyOf: p => p, isCouncilAt: () => false, memberAt: () => false,
     rosterAt: () => { throw new Error('not founded'); }, settingsAt: () => { throw new Error('not founded'); },
@@ -480,6 +497,9 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
   let proposalRejected: Rejected[] = []; // from the last pass only
   let rounds: RoundView[] = [];
   let payments = new Map<string, Payment>();
+  let reports = new Map<string, ReportView[]>();
+  let claims = new Map<string, ClaimView[]>();
+  let committed = 0;
   let rosterCandidates: Candidate<RosterContent>[] = [];
   let settingsCandidates: Candidate<SettingsContent>[] = [];
   let rosterDisputed = false;
@@ -553,6 +573,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
 
     proposalRejected = [];
     proposals = computeProposals();
+    [claims, reports] = computeDelivery();
     [rounds, payments] = computeRounds();
 
     if (extendRoster() || extendSettings()) continue;
@@ -567,6 +588,10 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       if (err) { proposalRejected.push({ event: e, reason: `proposal: ${err}` }); continue; }
       if (!memberAt(e.pubkey, e.created_at)) { proposalRejected.push({ event: e, reason: 'proposal: signer is not a member' }); continue; }
       if (settingsAt(e.created_at).content.closed) { proposalRejected.push({ event: e, reason: 'proposal: the DAO is closed' }); continue; }
+      if (c!.type === 'payout' && c!.payload.schedule) {
+        const err = scheduleRulesError(c!.payload.schedule as Tranche[], settingsAt(e.created_at).content.rules);
+        if (err) { proposalRejected.push({ event: e, reason: `proposal: ${err}` }); continue; }
+      }
       if (c!.type === 'payout' && (c!.payload.outputs as Output[]).some(o => isTreasuryAddress(o.address))) { proposalRejected.push({ event: e, reason: 'proposal: pays the treasury' }); continue; }
       if (c!.type === 'close' && isTreasuryAddress(c!.payload.destination)) { proposalRejected.push({ event: e, reason: 'proposal: pays the treasury' }); continue; }
       if (c!.type === 'change_council') {
@@ -698,6 +723,44 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
     });
   }
 
+  /**
+   * 4.6: bounty claims and delivery reports. A claim is a member's address for a passed bounty (their latest
+   * counts); a report is by the proposer, the member the payout pays, or a member who claimed the bounty first.
+   */
+  function computeDelivery(): [Map<string, ClaimView[]>, Map<string, ReportView[]>] {
+    const cl = new Map<string, ClaimView[]>();
+    const rp = new Map<string, ReportView[]>();
+    const firstTally = (p: ProposalView) => Math.min(...(p.tally?.events.map(e => e.created_at) ?? [Infinity]));
+    for (const e of ofKind(KIND.claim).sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1))) {
+      const p = proposals.find(x => x.event.id === tagValue(e, 'e'));
+      const b = parseJson<{ address?: string }>(e.content);
+      if (!p || p.content.type !== 'payout' || p.content.payload.bounty !== true || p.status !== 'passed') { proposalRejected.push({ event: e, reason: 'claim: not a passed bounty' }); continue; }
+      if (e.created_at < firstTally(p)) { proposalRejected.push({ event: e, reason: 'claim: before the tally' }); continue; }
+      if (!memberAt(e.pubkey, e.created_at)) { proposalRejected.push({ event: e, reason: 'claim: signer is not a member' }); continue; }
+      if (!b || !validAddress(b.address, network) || isTreasuryAddress(b.address!)) { proposalRejected.push({ event: e, reason: 'claim: address' }); continue; }
+      const person = personOf(e.pubkey);
+      const list = (cl.get(p.event.id) ?? []).filter(x => x.person !== person); // a later claim replaces the earlier one
+      list.push({ event: e, person, address: b.address! });
+      cl.set(p.event.id, list);
+    }
+    for (const e of ofKind(KIND.report).sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1))) {
+      const p = proposals.find(x => x.event.id === tagValue(e, 'e'));
+      const b = parseJson<{ tranche?: number; text?: string; link?: string }>(e.content);
+      if (!p || p.content.type !== 'payout' || p.status !== 'passed') { proposalRejected.push({ event: e, reason: 'report: not a passed payout' }); continue; }
+      const pl = p.content.payload;
+      const count = Array.isArray(pl.schedule) ? (pl.schedule as Tranche[]).length : 1;
+      if (!b || !Number.isInteger(b.tranche) || b.tranche! < 1 || b.tranche! > count || !isStr(b.text, REPORT_MAX) || (b.link !== undefined && !isStr(b.link, 500))) { proposalRejected.push({ event: e, reason: 'report: malformed' }); continue; }
+      if (!memberAt(e.pubkey, e.created_at)) { proposalRejected.push({ event: e, reason: 'report: signer is not a member' }); continue; }
+      const person = personOf(e.pubkey);
+      const allowed = person === personOf(p.event.pubkey)
+        || (pl.outputs as Output[]).some(o => o.member && personOf(o.member) === person)
+        || (pl.bounty === true && (cl.get(p.event.id) ?? []).some(c => c.person === person && c.event.created_at <= e.created_at));
+      if (!allowed) { proposalRejected.push({ event: e, reason: 'report: not the proposer, the paid member or a claimant' }); continue; }
+      rp.set(p.event.id, [...(rp.get(p.event.id) ?? []), { event: e, person, tranche: b.tranche!, text: b.text!, ...(b.link ? { link: b.link } : {}) }]);
+    }
+    return [cl, rp];
+  }
+
   function computeRounds(): [RoundView[], Map<string, Payment>] {
     const out: RoundView[] = [];
     const paidAt = new Map<string, number>(); // proposal → receipt time
@@ -708,6 +771,35 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       const t = tallyAt(p);
       if (!Number.isFinite(t)) return undefined;
       return roundDatesAfter(t, p.rules.timezone || 'UTC', Math.max(1, p.rules.lapseAfterRounds ?? 2), roundRulesAt).pop();
+    };
+    // 4.6: scheduled payouts, paid a tranche at a time after a report.
+    const isScheduled = (p: ProposalView) => p.content.type === 'payout' && Array.isArray(p.content.payload.schedule);
+    const scheduleOf = (p: ProposalView) => p.content.payload.schedule as Tranche[];
+    const bountyChosen = new Map<string, string>(); // proposal → the claimant a paid round chose
+    const trancheKey = (id: string, n: number) => `${id}#${n}`;
+    const nextTranche = (p: ProposalView, at: number) => {
+      let n = 1;
+      while (n <= scheduleOf(p).length && (paidAt.get(trancheKey(p.event.id, n)) ?? Infinity) <= at) n++;
+      return n;
+    };
+    const dueAt = (p: ProposalView, n: number) => tallyAt(p) + scheduleOf(p)[n - 1].due_days * scheduleDay(p.rules);
+    /** Reports that count for tranche n by time t: a bounty's from a claimant (after the first tranche, the chosen one). */
+    const reportsFor = (p: ProposalView, n: number, t: number) => (reports.get(p.event.id) ?? []).filter(r => r.tranche === n && r.event.created_at <= t
+      && (p.content.payload.bounty !== true || (bountyChosen.has(p.event.id) ? r.person === bountyChosen.get(p.event.id) : (claims.get(p.event.id) ?? []).some(c => c.person === r.person && c.event.created_at <= r.event.created_at))));
+    /** When tranche n lapses: no report by the first round date after its due date (practice: due + one voting period),
+     *  or, once reported, not paid by the second round date after the first report. */
+    const trancheLapseAt = (p: ProposalView, n: number): number => {
+      const due = dueAt(p, n);
+      const noReport = p.rules.votingPeriodDays < 1 ? due + Math.round(p.rules.votingPeriodDays * 86400) : roundDatesAfter(due, p.rules.timezone || 'UTC', 1, roundRulesAt).pop()!;
+      const first = reportsFor(p, n, noReport)[0];
+      return first ? Math.max(noReport, roundDatesAfter(first.event.created_at, p.rules.timezone || 'UTC', 2, roundRulesAt).pop()!) : noReport;
+    };
+    /** The addresses a round may pay for tranche n of a bounty: the claims of members who reported it. */
+    const bountyAddresses = (p: ProposalView, n: number, t: number) => {
+      const people = new Set(reportsFor(p, n, t).map(r => r.person));
+      const latest = new Map<string, string>();
+      for (const c of claims.get(p.event.id) ?? []) if (c.event.created_at <= t && people.has(c.person)) latest.set(c.person, c.address);
+      return latest; // person → address
     };
     for (const e of ofKind(KIND.round)) {
       const c = parseJson<RoundContent>(e.content);
@@ -738,6 +830,15 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         if (!p) { errors.push(`unknown proposal ${c.proposals[i].slice(0, 8)}`); continue; }
         if (p.status !== 'passed' || !['payout', 'close', 'change_council'].includes(p.content.type)) errors.push(`proposal ${p.number} is not a passed payout`);
         if (!p.confirmedAt(e.created_at)) errors.push(`proposal ${p.number} is not confirmed by its recipient`);
+        if (p.status === 'passed' && isScheduled(p)) {
+          // 4.6.2: the next tranche, reported before the round, not lapsed.
+          const n = c.tranches?.[p.event.id];
+          if (!Number.isInteger(n)) { errors.push(`proposal ${p.number}: the round names no tranche`); continue; }
+          if (n !== nextTranche(p, e.created_at)) errors.push(`proposal ${p.number}: tranche ${n} is not the next to pay`);
+          else if (trancheLapseAt(p, n!) <= e.created_at) errors.push(`proposal ${p.number}: tranche ${n} has lapsed`);
+          else if (!reportsFor(p, n!, e.created_at).length) errors.push(`proposal ${p.number}: tranche ${n} has no report`);
+          continue;
+        }
         const paid = paidAt.get(p.event.id);
         if (paid !== undefined && paid <= e.created_at) errors.push(`proposal ${p.number} is already paid`);
         const l = lapseAt(p);
@@ -757,9 +858,22 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         } else if (isSweep) {
           if (ins.outputs.length !== 1 || !receivesOf(sv.descriptor, network).has(ins.outputs[0].address)) errors.push('a sweep round has one output, to the treasury');
         } else {
-          const want = props.flatMap(p => (p?.content.type === 'payout' ? (p.content.payload.outputs as Output[]) : [])).map(o => `${o.address}:${o.amount_sat}`).sort();
-          const got = nonChange.map(o => `${o.address}:${o.value}`).sort();
-          if (hashJson(want) !== hashJson(got)) errors.push('outputs are not exactly the payouts');
+          // A scheduled payout pays its named tranche; a bounty, to the claim of a member who reported it.
+          const want: string[] = [];
+          let got = nonChange.map(o => `${o.address}:${o.value}`);
+          for (const p of props) {
+            if (!p || p.content.type !== 'payout') continue;
+            const n = c.tranches?.[p.event.id];
+            if (!isScheduled(p)) { want.push(...(p.content.payload.outputs as Output[]).map(o => `${o.address}:${o.amount_sat}`)); continue; }
+            if (!Number.isInteger(n) || n! < 1 || n! > scheduleOf(p).length) continue; // reported above
+            const amount = scheduleOf(p)[n! - 1].amount_sat;
+            if (p.content.payload.bounty !== true) { want.push(`${(p.content.payload.outputs as Output[])[0].address}:${amount}`); continue; }
+            const ok = [...bountyAddresses(p, n!, e.created_at).values()].map(a => `${a}:${amount}`);
+            const hit = got.find(g => ok.includes(g));
+            if (!hit) errors.push(`proposal ${p.number}: the bounty does not pay a claimant who reported`);
+            else got = got.filter((g, k) => k !== got.indexOf(hit));
+          }
+          if (hashJson(want.sort()) !== hashJson(got.sort())) errors.push('outputs are not exactly the payouts');
         }
         if (c.fee_sat !== ins.fee) errors.push('fee_sat does not match the PSBT');
         if (ins.fee <= 0) errors.push('no fee');
@@ -806,7 +920,21 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         event: e, content: c, inspection: ins, errors, isClose, isMigration: !!migration, isSweep, signatures, signEvents, declines, ready, threshold, receipt,
         status: errors.length ? 'invalid' : receipt ? 'paid' : 'open',
       };
-      if (view.status === 'paid') for (const id of c.proposals) if (!paidAt.has(id)) paidAt.set(id, receipt!.created_at);
+      if (view.status === 'paid') {
+        for (const id of c.proposals) {
+          const p = proposals.find(x => x.event.id === id);
+          const n = c.tranches?.[id];
+          if (p && isScheduled(p) && Number.isInteger(n)) {
+            if (!paidAt.has(trancheKey(id, n!))) paidAt.set(trancheKey(id, n!), receipt!.created_at);
+            if (p.content.payload.bounty === true && !bountyChosen.has(id)) {
+              const paidTo = ins!.outputs.map(o => o.address);
+              const who = [...bountyAddresses(p, n!, e.created_at)].find(([, a]) => paidTo.includes(a));
+              if (who) bountyChosen.set(id, who[0]);
+            }
+            if (n === scheduleOf(p).length && !paidAt.has(id)) paidAt.set(id, receipt!.created_at);
+          } else if (!paidAt.has(id)) paidAt.set(id, receipt!.created_at);
+        }
+      }
       out.push(view);
     }
     // A round that shares a coin with a paid round can never confirm.
@@ -824,8 +952,35 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       if (later.length) r.replacedBy = later.sort((a, b) => b.event.created_at - a.event.created_at)[0];
     }
     const pay = new Map<string, Payment>();
+    committed = 0;
     for (const p of proposals) {
       if (p.status !== 'passed' || !['payout', 'close', 'change_council'].includes(p.content.type)) continue;
+      if (isScheduled(p)) {
+        const sched = scheduleOf(p);
+        const next = nextTranche(p, now);
+        const views: TrancheView[] = sched.map((t, k) => {
+          const n = k + 1;
+          const paidRound = out.find(r => r.status === 'paid' && r.content.tranches?.[p.event.id] === n);
+          const staged = p.content.payload.bounty !== true ? (p.content.payload.outputs as Output[])[0].address : undefined;
+          const chosen = bountyChosen.get(p.event.id);
+          const address = staged ?? (chosen ? (claims.get(p.event.id) ?? []).find(c => c.person === chosen)?.address : undefined);
+          const report = reportsFor(p, n, now).slice(-1)[0];
+          if (paidRound) return { n, amount_sat: t.amount_sat, dueAt: dueAt(p, n), status: 'paid', report, address, paidRound: paidRound.event.id };
+          return { n, amount_sat: t.amount_sat, dueAt: dueAt(p, n), status: n === next ? 'awaiting_report' : 'upcoming', report, address, lapseAt: n === next ? trancheLapseAt(p, n) : undefined };
+        });
+        let lapsed = false;
+        if (next <= sched.length && views[next - 1].lapseAt! <= now) {
+          lapsed = true;
+          for (const v of views.slice(next - 1)) v.status = 'lapsed';
+        }
+        const inRound = out.find(r => r.status === 'open' && !r.replacedBy && r.content.tranches?.[p.event.id] === next);
+        if (!lapsed && next <= sched.length) views[next - 1].status = inRound ? 'in_round' : views[next - 1].report ? 'reported' : 'awaiting_report';
+        for (const v of views) if (v.status !== 'paid' && v.status !== 'lapsed') committed += v.amount_sat;
+        const status: PaymentStatus = next > sched.length ? 'paid' : lapsed ? 'lapsed' : inRound ? 'in_round'
+          : !p.confirmed ? 'unconfirmed' : views[next - 1].report ? 'waiting' : 'awaiting_report';
+        pay.set(p.event.id, { status, round: inRound, lapseAt: views[next - 1]?.lapseAt, tranches: views, tranche: next <= sched.length ? next : undefined });
+        continue;
+      }
       const paidRound = out.find(r => r.status === 'paid' && r.content.proposals.includes(p.event.id));
       const openRound = out.find(r => r.status === 'open' && !r.replacedBy && r.content.proposals.includes(p.event.id));
       const l = lapseAt(p);
@@ -1068,7 +1223,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
     discussion,
     rosters, settings, rosterCandidates, settingsCandidates, rosterDisputed, settingsDisputed,
     members, rules: settings[settings.length - 1].content.rules, proposals, verifies, rekeys, leaves,
-    pendingRoster, pendingSettings, rounds, payments, closed: closedNow, keywraps,
+    pendingRoster, pendingSettings, rounds, payments, reports, claims, committed, closed: closedNow, keywraps,
     personOf, keyOf, isCouncilAt, memberAt, rosterAt, settingsAt, isTreasuryAddress, standingAt,
   };
 }

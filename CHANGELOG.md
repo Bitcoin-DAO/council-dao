@@ -2,6 +2,25 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.8.0 · 12 November 2026
+
+**Paid on delivery** (protocol 4.6): staged payouts and bounties.
+- **Staged payout:** a payout can be "paid in tranches, on delivery": up to 4 tranches (`maxTranches`) within 90 days of approval (`maxScheduleDays`), each with an amount and a due date in days after approval. The vote approves the whole schedule once.
+- **Bounty:** a new choice in the proposal form. Its recipient is open: after approval, members claim it with their address (`dao.claim`), deliver and report; the council picks among those who claimed and reported when it prepares the round, and the round pays that claimant.
+- **Reports** (`dao.report`): the proposer, the member being paid, or a bounty's claimant writes one per tranche on the proposal page. A tranche joins a round only after its report; the council's signature accepts the delivery, a decline with a reason rejects it, and the reporter can write again. With no report by the due date plus one round (practice mode: plus one voting period), the tranche lapses and so does the rest of the schedule.
+- An ordinary payout can **ask for a report** after payment; it does not hold up the payment.
+- **Where reports are read:** in Discussion, a chip on the thread ("Report 1 of 2") and a **Reports** filter; in the thread, each report is a card, marked paid once its tranche is paid; on the proposal page, the schedule with each tranche's status.
+- **Committed:** the treasury card shows how much is promised in approved tranches not yet paid; the proposal form warns when a new schedule would promise more than the balance.
+- Practice mode: a schedule day lasts the voting period / 7 (about 86 seconds with 10-minute votes).
+- The relay accepts kinds 3591 and 3592.
+
+**Other**
+- The profile no longer says "Council members leave through a council change proposal."
+
+**Tests**
+- Unit: staged payout (schedule rules; report before each tranche; only the next tranche; lapse stops the rest; committed amount) and bounty (claims after the tally, members only; reports only by claimants; the round pays a claimant who reported).
+- End-to-end (`e2e/delivery.e2e.cjs`): a 2-tranche payout and a bounty; reports and two claims; one round pays tranche 1 and the bounty to the claimant the council picked (checked with embit); tranche 2 lapses; the Reports filter and report cards in Discussion.
+
 ## v0.7.1 · 12 November 2026
 
 - **"Propose a new member" lives on the Members page** only, under the member count and list version, for members signed in. Removed from the Proposals page and the profile; the new-proposal form's note links to the Members page.

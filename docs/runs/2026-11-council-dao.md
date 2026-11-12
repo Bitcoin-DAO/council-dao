@@ -66,3 +66,13 @@ COUNCIL DAO has two earlier treasuries: A, B, D (2 of 3, after the lost key) and
 3. The sweep page: the amount, the treasury's first unused address; prepare and publish.
 4. The round page says it is a sweep and needs 2 signatures from A, B (D's holder is off the council). Sign with cards A and B; the SeedSigner loads the A, B, D descriptor in step 1. Broadcast.
 5. After the receipt, Home's earlier-treasury card is gone and the balance includes the sweep.
+
+## v0.8.0 plan: paid on delivery
+
+Practice mode: a schedule "day" lasts about 86 seconds (10-minute votes / 7).
+1. **Staged payout:** a member proposes a payout to their own address, ticks "Paid in tranches, on delivery": tranche 1 = 1,000 sats at 5 days, tranche 2 = 1,000 sats at 15 days (about 7 and 21 minutes after approval). Vote.
+2. After the close: the proposal page shows the schedule ("waiting for the report"). Within about 17 minutes of approval, the proposer writes the report for tranche 1. It appears as a card in the thread, and Discussion → Reports lists it ("Report 1 of 2").
+3. **Bounty:** a member proposes "Bounty", 1,000 sats at 10 days. Vote. Two members claim it with their own addresses and both write a report.
+4. **One round:** the council prepares the round: tranche 1 of the staged payout and the bounty, choosing which claimant to pay. Sign 2 of 3, broadcast. Check the outputs: 1,000 to the staged recipient, 1,000 to the chosen claimant.
+5. **Lapse:** write no report for tranche 2; about 31 minutes after approval it shows "lapsed", and the treasury's "promised in tranches" line disappears.
+6. **Decline (optional):** report tranche 2 of another schedule, have one council member decline the round with a reason, replace the round without it, write a new report, pay it.
