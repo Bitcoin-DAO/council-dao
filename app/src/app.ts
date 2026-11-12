@@ -3,7 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { stageError, stageOf, usable, type SiteConfig } from './core/config';
 import { KIND, sign, template, type Event } from './core/events';
 import { rebuild, type DaoState, type Member } from './core/state';
-import { parseDescriptor } from './core/descriptor';
+import { walletOf, parseDescriptor } from './core/descriptor';
 import { broadcast, loadTreasury, sendToMissing, txDepth, txStatus, type Broadcast, type TreasuryView, type TxStatus } from './core/chain';
 import { finalizeRound } from './core/round';
 import type { RoundView } from './core/state';
@@ -264,13 +264,24 @@ let lastRoundMarker: string | undefined;
  */
 export function treasuryDescriptors(s: DaoState): { current: string; others: { descriptor: string; role: 'earlier' | 'next' }[] } {
   const current = s.settings[s.settings.length - 1].content.descriptor;
-  const known = new Set(s.settings.map(v => v.content.descriptor));
-  const earlier = [...known].filter(d => d !== current).map(descriptor => ({ descriptor, role: 'earlier' as const }));
-  const next = s.proposals
-    .filter(p => p.content.type === 'change_council' && ['waiting', 'in_round', 'paid'].includes(s.payments.get(p.event.id)?.status ?? ''))
-    .map(p => p.content.payload.new_descriptor as string)
-    .filter(d => !known.has(d))
-    .map(descriptor => ({ descriptor, role: 'next' as const }));
+  // One entry per wallet: a council that returns to an earlier key set has the same treasury again (COUNCIL DAO,
+  // 12 Nov 2026). The incoming treasury of a move under way counts as "next", even when it is an earlier wallet.
+  const seen = new Set([walletOf(current)]);
+  const next: { descriptor: string; role: 'next' }[] = [];
+  const later = new Set(s.settings.slice(1).map(v => v.content.descriptor));
+  for (const p of s.proposals) {
+    if (p.content.type !== 'change_council' || !['waiting', 'in_round', 'paid'].includes(s.payments.get(p.event.id)?.status ?? '')) continue;
+    const d = p.content.payload.new_descriptor as string;
+    if (later.has(d) || seen.has(walletOf(d))) continue; // already in force (or was), or listed
+    seen.add(walletOf(d));
+    next.push({ descriptor: d, role: 'next' });
+  }
+  const earlier: { descriptor: string; role: 'earlier' }[] = [];
+  for (const v of s.settings) {
+    if (seen.has(walletOf(v.content.descriptor))) continue;
+    seen.add(walletOf(v.content.descriptor));
+    earlier.push({ descriptor: v.content.descriptor, role: 'earlier' });
+  }
   return { current, others: [...next, ...earlier] };
 }
 

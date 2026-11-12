@@ -54,3 +54,6 @@ Coins: about 5,180 sats left; a top-up of ~10,000 sats makes steps 2 and 4 comfo
 18. **Migration needed the third signature (3 of 4, old treasury):** @CouncilB's phone still ran v0.6.1 (round "Not valid", hidden) until reloaded.
 19. **Transaction box before broadcast:** with 2 of 3 signatures, the round showed "Waiting for the first confirmation" with a mempool.space link: some source answered "known" for a transaction not yet sent. Not reproduced yet; watch for it.
 20. **Explorer links → Blockbook** (v0.6.3), as asked.
+21. **Recall and removal done (v0.6.x):** recall of @CouncilC (COUNCIL-0009) migrated 12,054 sats to the 2-of-3 A, B, C wallet, signed 3 of 4 by @CouncilA, @Member, @CouncilB; settings version 4; member list version 4 cleared @CouncilC's Council mark; @CouncilC removed in member list version 5. Members: 3, all on the council.
+
+**v0.6 result:** replacement round, recall and removal passed in the wild. Fixes found on the way: v0.6.1 (explorer link), v0.6.2 (replaced round blocked the next one), v0.6.3 (Blockbook links), v0.6.4 (same wallet in another key order).

@@ -8,6 +8,7 @@ import { explorerFor, feePolicyOf, pushPageOf, sourceLabel, suggestFee, txDepth,
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
 import type { Network } from '../core/config';
 import { mergeSignatures } from '../core/hwkeys';
+import { sameWallet } from '../core/descriptor';
 import { keptSignature } from '../lib/store';
 import { newTreasuryAddress } from '../core/council';
 import { SeedSignerSign } from './Hw';
@@ -83,7 +84,7 @@ export function PrepareRound() {
   const rateOk = Number.isFinite(r) && r >= 1 && r <= max;
   const aboveCap = suggested !== undefined && suggested > max;
   // A reading of the treasury in force: after a council change, an older reading is of the earlier descriptor.
-  const live = !!app.treasury && !app.treasuryLoading && (app.treasuryAt ?? 0) >= opened && app.treasury.descriptor === settings.descriptor;
+  const live = !!app.treasury && !app.treasuryLoading && (app.treasuryAt ?? 0) >= opened && !!app.treasury.descriptor && sameWallet(app.treasury.descriptor, settings.descriptor);
   // Known at once from the live reading: is there enough for the payouts and a fee? (TEST DAO, 9 Nov 2026)
   const shortBy = live && !sweep && rateOk ? missingFunds(app.treasury!.utxos.reduce((a, u) => a + u.value, 0), outputs, parseDescriptor(settings.descriptor, cfg.network), app.treasury!.utxos.length, r, cfg.network) : 0;
 

@@ -107,3 +107,15 @@ export function treasuryAddress(d: ParsedDescriptor, network: Network, branch: 0
   const pay = sortedMultisig(d.threshold, pubkeys, true, btcNetwork(network));
   return { address: pay.address as string, witnessScript: bytesToHex(pay.witnessScript!), pubkeys };
 }
+
+/**
+ * Which wallet a treasury descriptor is: its threshold and keys, in no particular order (sortedmulti sorts the
+ * keys in the script, so a council listed in another order is the same wallet). COUNCIL DAO, 12 Nov 2026: after
+ * a recall the council was the founding key set again, written in a different order.
+ */
+export function walletOf(desc: string): string {
+  const m = desc.replace(/#.*$/, '').match(/^wsh\(sortedmulti\((\d+),(.*)\)\)$/);
+  if (!m) return desc;
+  return `${m[1]}:${m[2].split(',').map(k => k.replace(/^\[[^\]]+\]/, '').replace(/\/.*$/, '')).sort().join(',')}`;
+}
+export const sameWallet = (a: string, b: string) => walletOf(a) === walletOf(b);

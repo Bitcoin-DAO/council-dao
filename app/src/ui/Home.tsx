@@ -9,6 +9,7 @@ import { councilTodo } from './Council';
 import { cadenceOf, roundDatesAfter } from '../core/time';
 import { proposalLabel, type RoundView } from '../core/state';
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
+import { sameWallet } from '../core/descriptor';
 import { explorerFor, type Movement, type TreasuryView } from '../core/chain';
 
 export function Home() {
@@ -158,8 +159,8 @@ export function Home() {
  * called "next" is the treasury, and the one it read as the treasury is an earlier one (until the next read).
  */
 function inForce(tr: TreasuryView | undefined, descriptor: string): TreasuryView | undefined {
-  if (!tr?.descriptor || tr.descriptor === descriptor) return tr;
-  const o = tr.others?.find(x => x.descriptor === descriptor && x.view);
+  if (!tr?.descriptor || sameWallet(tr.descriptor, descriptor)) return tr;
+  const o = tr.others?.find(x => sameWallet(x.descriptor, descriptor) && x.view);
   if (!o) return tr;
   const { others: _o, ...was } = tr;
   return {

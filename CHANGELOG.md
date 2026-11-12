@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.6.4 · 12 November 2026
+
+- **A council that returns to an earlier key set is recognised as the same treasury.** Treasuries are now compared by their keys and threshold, not by how the descriptor lists them. On COUNCIL DAO, recalling @CouncilC left cards A, B, C (2 of 3), the founding key set in another order: Home showed the same 12,054 sats twice, as the treasury and as an "earlier treasury". Now it shows once. While a move to such a wallet is under way, it shows as the new treasury, not as an earlier one.
+
 ## v0.6.3 · 12 November 2026
 
 - **Block explorer links go to Blockbook** (the round's transaction, Home's "see it on the block explorer", History), through the chain gateway, when the DAO has a Blockbook source; otherwise the first source. Members found Blockbook the clearest. Replaces v0.6.1's "a source that knows it", which sent the link to mempool.space.

@@ -19,3 +19,20 @@ describe('council change reasons (4.1.2)', () => {
     expect(councilChangeSchemaError({ ...base, reason: 'rotation' })).toBeUndefined();
   });
 });
+
+import { buildDescriptor, walletOf, sameWallet } from './descriptor';
+
+describe('the same wallet in another order (COUNCIL DAO, 12 Nov 2026)', () => {
+  const A = { fingerprint: 'd3bdd580', xpub: 'tpubDFKVE4hAcCsmYyXX8mURCAE3smjoLhyqGH5CtJjgyhBBQR9VopPxmK24XsjmbG4XTvHoQo73WBRnC2aLuG5mbUPemuyvUBJUEeDMM5nyG8e' };
+  const B = { fingerprint: '49c2d730', xpub: 'tpubDFUxuLmA93bTzumuAt8nqakLsDcNXk5ZB2mwZv1SxwX7u6THfmvdqBRrrBdkmCeLfQPcs8Rx3kEYsAZFYvQjSeJ6V1Q6dMn7Z7TzJHswBXU' };
+  const C = { fingerprint: 'ec03225a', xpub: 'tpubDFCfvs2SLPX7J8JKkpaRQ6XKH2EksYsLNPAsucb9KDunGYemVrAm8VL4kNJ5Gm6icC3mBUinvirVXF5ZMatoCHuqmpAYKcmKUTLT7pMyXxE' };
+  it('compares keys and threshold, not their order', () => {
+    const founding = buildDescriptor(2, [C, B, A], 'testnet4');
+    const afterRecall = buildDescriptor(2, [B, A, C], 'testnet4');
+    expect(founding).not.toBe(afterRecall);
+    expect(sameWallet(founding, afterRecall)).toBe(true);
+    expect(sameWallet(founding, buildDescriptor(3, [C, B, A], 'testnet4'))).toBe(false);
+    expect(sameWallet(founding, buildDescriptor(2, [A, B], 'testnet4'))).toBe(false);
+    expect(walletOf(founding).startsWith('2:')).toBe(true);
+  });
+});
