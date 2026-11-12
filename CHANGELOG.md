@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.6.1 · 12 November 2026
+
+- The transaction link on a round opens the explorer of a chain source that already knows the transaction. Before, it always opened the first source's explorer, which answered "not found" until that source had the transaction too (seen on COUNCIL DAO while the round showed "known to 2 of 3 sources").
+
 ## v0.6.0 · 11 November 2026
 
 Fixes and gaps from the COUNCIL DAO run (`docs/runs/2026-11-council-dao.md`).

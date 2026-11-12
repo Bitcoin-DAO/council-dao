@@ -48,3 +48,4 @@
 5. History shows the recall; Members shows the new council.
 
 Coins: about 5,180 sats left; a top-up of ~10,000 sats makes steps 2 and 4 comfortable.
+15. **v0.6.0:** replacement round worked (COUNCIL-0007 declined, replaced with COUNCIL-0007 + 0008 "approved since" on the same 10,000-sat coin). Recall of @CouncilC (COUNCIL-0009) passed and waits for the payout round. The round's transaction link said "not found" while the round showed "known to 2 of 3 sources": it opened the first source's explorer, which did not have it yet. Fixed in v0.6.1 (link to a source that knows it).
