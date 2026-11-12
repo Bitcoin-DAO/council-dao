@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { broadcast, sendToMissing, txDepth, explorerOf, feePolicyOf, loadTreasury, pushPageOf, sourceLabel, sourceOf, suggestFee, txSeenBy, txStatus, type Fetcher } from './chain';
+import { broadcast, sendToMissing, txDepth, explorerOf, explorerFor, feePolicyOf, loadTreasury, pushPageOf, sourceLabel, sourceOf, suggestFee, txSeenBy, txStatus, type Fetcher } from './chain';
 import { parseDescriptor, treasuryAddress } from './descriptor';
 
 // UNO's practice treasury (2 of 2), as founded on 6 November 2026.
@@ -52,6 +52,8 @@ describe('chain sources', () => {
     expect(sourceOf('blockbook:https://blockbook.tbtc.zelcore.io/')).toEqual({ kind: 'blockbook', base: 'https://blockbook.tbtc.zelcore.io' });
     expect(explorerOf('https://mempool.space/testnet4/api')).toBe('https://mempool.space/testnet4');
     expect(explorerOf('blockbook:https://blockbook.tbtc.zelcore.io')).toBe('https://blockbook.tbtc.zelcore.io');
+    expect(explorerFor(['https://mempool.space/testnet4/api', 'blockbook:https://g.example/bb'])).toBe('https://g.example/bb');
+    expect(explorerFor(['https://mempool.space/testnet4/api'])).toBe('https://mempool.space/testnet4');
     expect(pushPageOf('https://mempool.space/testnet4/api')).toBe('https://mempool.space/testnet4/tx/push');
     expect(pushPageOf('blockbook:https://blockbook.tbtc.zelcore.io')).toBe('https://blockbook.tbtc.zelcore.io/sendtx');
   });

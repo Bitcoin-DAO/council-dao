@@ -9,7 +9,7 @@ import { councilTodo } from './Council';
 import { cadenceOf, roundDatesAfter } from '../core/time';
 import { proposalLabel, type RoundView } from '../core/state';
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
-import { explorerOf, type Movement, type TreasuryView } from '../core/chain';
+import { explorerFor, type Movement, type TreasuryView } from '../core/chain';
 
 export function Home() {
   const app = useApp();
@@ -21,7 +21,7 @@ export function Home() {
   const m = current.threshold;
   const cap = current.rules.treasuryCapSats;
   const atCap = tr ? tr.balance >= cap : false;
-  const explorer = explorerOf(chainApis()[0] ?? '');
+  const explorer = explorerFor(chainApis());
   const open = app.dao!.proposals.filter(p => p.status === 'open').reverse();
   const round = openRound(app.dao!);
   const waiting = app.dao!.proposals.filter(p => app.dao!.payments.get(p.event.id)?.status === 'waiting' && p.content.type === 'payout');

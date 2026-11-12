@@ -4,7 +4,7 @@ import { mnemonicToSeedSync } from '@scure/bip39';
 import { broadcastRound, chainApis, receiptDepth, refreshTreasury, signAndPublish, signingKey, useApp } from '../app';
 import { fmtSats, t } from '../i18n';
 import { KIND } from '../core/events';
-import { explorerOf, feePolicyOf, pushPageOf, sourceLabel, suggestFee, txDepth, txSeenBy, txStatus, type Broadcast, type TxStatus } from '../core/chain';
+import { explorerFor, feePolicyOf, pushPageOf, sourceLabel, suggestFee, txDepth, txSeenBy, txStatus, type Broadcast, type TxStatus } from '../core/chain';
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
 import type { Network } from '../core/config';
 import { mergeSignatures } from '../core/hwkeys';
@@ -446,10 +446,8 @@ export function RoundDetail({ id }: { id: string }) {
         </section>
 
         {ins && (onChain || r.receipt) && (
-          // The link opens the explorer of a source that already knows the transaction (until all of them do,
-          // the first source's explorer may answer "not found").
           <section class="card">
-            <div class="kv"><span>{t('rd.txid')}</span><a class="mono" href={`${explorerOf(apis.find(a => seen.includes(a)) ?? apis[0] ?? '')}/tx/${ins.txid}`} target="_blank" rel="noopener">{ins.txid.slice(0, 16)}…</a></div>
+            <div class="kv"><span>{t('rd.txid')}</span><a class="mono" href={`${explorerFor(apis)}/tx/${ins.txid}`} target="_blank" rel="noopener">{ins.txid.slice(0, 16)}…</a></div>
             {height ? (
               <p class="ok">{t('rd.receipt', { h: height })}</p>
             ) : st?.disagree ? (

@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.6.3 · 12 November 2026
+
+- **Block explorer links go to Blockbook** (the round's transaction, Home's "see it on the block explorer", History), through the chain gateway, when the DAO has a Blockbook source; otherwise the first source. Members found Blockbook the clearest. Replaces v0.6.1's "a source that knows it", which sent the link to mempool.space.
+
 ## v0.6.2 · 12 November 2026
 
 - **Fixed: after a replaced round, the next round was refused ("another round is open").** A replaced round becomes void once its replacement is confirmed, but the check that only one round is open ran before that was worked out, so the replaced round still counted as open. Found on COUNCIL DAO: the council-change migration after a replacement was marked "Not valid". A round whose coin a confirmed round has already spent no longer counts as open. The migration round already published becomes valid with this version; nothing needs preparing again.

@@ -116,6 +116,12 @@ export function explorerOf(entry: string): string {
   return s.kind === 'blockbook' ? s.base : s.base.replace(/\/api$/, '');
 }
 
+/**
+ * The block explorer the app links to: a Blockbook source when the DAO has one (members found it the clearest,
+ * COUNCIL DAO, 12 November 2026), otherwise the first source.
+ */
+export const explorerFor = (apis: string[]) => explorerOf(apis.find(a => sourceOf(a).kind === 'blockbook') ?? apis[0] ?? '');
+
 /** The explorer page where anyone can paste a signed transaction to broadcast it. */
 export function pushPageOf(entry: string): string {
   return sourceOf(entry).kind === 'blockbook' ? `${explorerOf(entry)}/sendtx` : `${explorerOf(entry)}/tx/push`;

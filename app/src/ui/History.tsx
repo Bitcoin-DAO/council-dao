@@ -4,7 +4,7 @@
 import type { ComponentChildren } from 'preact';
 import { chainApis, useApp } from '../app';
 import { fmtDate, t } from '../i18n';
-import { explorerOf } from '../core/chain';
+import { explorerFor } from '../core/chain';
 import { stageOf, type CouncilEntry } from '../core/config';
 import { proposalLabel, type DaoState, type ProposalView, type SettingsContent } from '../core/state';
 import { Footer, Header } from './parts';
@@ -34,7 +34,7 @@ export function History() {
   const dao = app.site!.name;
   const cfg = s.founded.config;
   const stage = stageOf(cfg);
-  const explorer = explorerOf(chainApis()[0] ?? '');
+  const explorer = explorerFor(chainApis());
   const tx = (txid: string) => <a class="mono small" href={`${explorer}/tx/${txid}`} target="_blank" rel="noopener">{txid.slice(0, 12)}…</a>;
   const entries = historyOf(s, nameOf, tx);
   const label = (p: ProposalView) => `${proposalLabel(dao, p.number)} · ${p.content.title}`;
