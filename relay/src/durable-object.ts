@@ -3,6 +3,7 @@ import {
   PUBKEY_RATE_LIMIT,
   DISCUSSION_KINDS,
   DISCUSSION_RATE_LIMIT,
+  MAX_FUTURE_SECONDS,
   REQ_RATE_LIMIT,
   PAY_TO_RELAY_ENABLED,
   AUTH_REQUIRED,
@@ -777,6 +778,12 @@ export class RelayWebSocket implements DurableObject {
         event.kind === undefined || !Array.isArray(event.tags) ||
         event.content === undefined || event.content === null) {
         this.sendOK(session.webSocket, event.id || '', false, 'invalid: missing required fields');
+        return;
+      }
+
+      // btc-dao: no events dated far in the future (config MAX_FUTURE_SECONDS)
+      if (event.created_at > Math.floor(Date.now() / 1000) + MAX_FUTURE_SECONDS) {
+        this.sendOK(session.webSocket, event.id, false, 'invalid: created_at is too far in the future');
         return;
       }
 

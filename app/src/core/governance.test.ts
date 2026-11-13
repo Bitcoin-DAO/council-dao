@@ -8,7 +8,7 @@ import { buildDescriptor, parseDescriptor, treasuryAddress } from './descriptor'
 import { KIND, sign, template, type Event } from './events';
 import { newSecret, pubkeyOf, treasuryKeyFromMnemonic } from './identity';
 import { shortCode } from './shortcode';
-import { nextRoster, nextSettings, rebuild, type DaoState, type ProposalContent, type TallyContent } from './state';
+import { nextRoster, nextSettings, rebuild, TALLY_SETTLE, type DaoState, type ProposalContent, type TallyContent } from './state';
 import { hashJson, parseJson } from './util';
 import { roundDatesAfter } from './time';
 
@@ -117,20 +117,50 @@ describe('proposals and votes (4.1, 4.3)', () => {
     expect(view(d.state(d.T + 8 * DAY + 1), p2).recount.result.passed).toBe(false);
   });
 
-  it('rejects tallies from outside the council and flags conflicting ones until the council endorses one', () => {
+  it('rejects tallies from outside the council; the fuller count wins a conflict, within the settle window', () => {
+    const d = dao();
+    const p = d.propose(d.f[0], { type: 'statement' }, d.T);
+    for (const i of [0, 1]) d.vote(d.f[i], p, 'yes', d.T + 1);
+    const C = d.T + 8 * DAY; // after the close
+    // A council phone that had seen only one of the two votes:
+    const s1 = d.state(C);
+    const one = view(s1, p);
+    d.tally(d.f[0], s1, p, C); // not council
+    expect(view(d.state(C + 1), p).status).toBe('awaiting_tally');
+    const partial = d.ev(KIND.tally, { ...one.recount, counted: [one.recount.counted[0]], result: { ...one.recount.result, yes: 1 } }, d.c[0], C + 1, [['e', p.id]]);
+    void partial;
+    const a = view(d.state(C + 2), p);
+    expect(a.disputed).toBe(false);
+    expect(a.tally!.content.result.yes).toBe(1);
+    expect(a.fuller).toBe(true); // this phone sees both votes: it publishes the fuller count
+    d.tally(d.c[1], d.state(C + 2), p, C + 3);
+    const b = view(d.state(C + 4), p);
+    expect(b.disputed).toBe(false);
+    expect(b.tally!.content.result.yes).toBe(2);
+    expect(b.fuller).toBe(false);
+    d.tally(d.c[2], d.state(C + 4), p, C + 5); // identical: one tally
+    expect(view(d.state(C + 6), p).disputed).toBe(false);
+  });
+
+  it('a different count that saw no more votes is a dispute; a count after the settle window changes nothing', () => {
     const d = dao();
     const p = d.propose(d.f[0], { type: 'statement' }, d.T);
     for (const i of [0, 1, 2]) d.vote(d.f[i], p, 'yes', d.T + 1);
-    const s = d.state(d.T + 8 * DAY);
-    d.tally(d.f[0], s, p, d.T + 8 * DAY); // not council
-    expect(view(d.state(d.T + 8 * DAY + 1), p).status).toBe('awaiting_tally');
-    const good = d.tally(d.c[0], s, p, d.T + 8 * DAY);
-    d.tally(d.c[1], s, p, d.T + 8 * DAY + 2); // identical: one tally
-    expect(view(d.state(d.T + 8 * DAY + 3), p).status).toBe('passed');
-    d.tally(d.c[3], s, p, d.T + 8 * DAY + 3, { result: { yes: 0, no: 3, abstain: 0, quorum_met: true, passed: false } });
-    expect(view(d.state(d.T + 8 * DAY + 4), p).status).toBe('disputed');
-    for (const i of [0, 1, 2]) d.endorse(d.c[i], good, 'tally', d.T + 9 * DAY);
-    expect(view(d.state(d.T + 9 * DAY + 1), p).status).toBe('passed');
+    const C = d.T + 8 * DAY;
+    const s = d.state(C);
+    d.tally(d.c[0], s, p, C);
+    d.tally(d.c[3], s, p, C + 3, { result: { yes: 0, no: 3, abstain: 0, quorum_met: true, passed: false } });
+    expect(view(d.state(C + 4), p).status).toBe('disputed');
+    const e = dao();
+    const q = e.propose(e.f[0], { type: 'statement' }, e.T);
+    for (const i of [0, 1]) e.vote(e.f[i], q, 'yes', e.T + 1);
+    const s0 = e.state(C);
+    const r = view(s0, q).recount;
+    e.ev(KIND.tally, { ...r, counted: [r.counted[0]], result: { ...r.result, yes: 1 } }, e.c[0], C, [['e', q.id]]);
+    e.tally(e.c[1], s0, q, C + TALLY_SETTLE + 1); // too late to settle anything
+    const late = view(e.state(C + TALLY_SETTLE + 2), q);
+    expect(late.tally!.content.result.yes).toBe(1);
+    expect(late.fuller).toBe(false);
   });
 
   it('rejects a proposal backdated before the last tallied one, so numbers never change', () => {

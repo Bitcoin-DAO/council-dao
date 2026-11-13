@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { nowSec, offsetFromDate, setClockOffset } from './util';
 import { councilChangeSchemaError, type CouncilChange } from './council';
 
 const K1 = 'a'.repeat(64);
@@ -34,5 +35,22 @@ describe('the same wallet in another order (COUNCIL DAO, 12 Nov 2026)', () => {
     expect(sameWallet(founding, buildDescriptor(3, [C, B, A], 'testnet4'))).toBe(false);
     expect(sameWallet(founding, buildDescriptor(2, [A, B], 'testnet4'))).toBe(false);
     expect(walletOf(founding).startsWith('2:')).toBe(true);
+  });
+});
+
+describe("the app's time", () => {
+  it('reads the offset from a Date header against the midpoint of the request', () => {
+    const server = Date.parse('Fri, 13 Nov 2026 17:00:00 GMT');
+    // The phone is 4 minutes slow; the request took 400 ms.
+    const sent = server - 240_000 - 200;
+    expect(offsetFromDate('Fri, 13 Nov 2026 17:00:00 GMT', sent, sent + 400)).toBe(240_000 + 500);
+    expect(offsetFromDate(null, 0, 0)).toBeUndefined();
+    expect(offsetFromDate('not a date', 0, 0)).toBeUndefined();
+  });
+  it('dates by the corrected time', () => {
+    const before = nowSec();
+    setClockOffset(300_000);
+    expect(nowSec() - before).toBeGreaterThanOrEqual(299);
+    setClockOffset(0);
   });
 });

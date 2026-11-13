@@ -45,6 +45,7 @@ __export(config_exports, {
   DISCUSSION_KINDS: () => DISCUSSION_KINDS,
   DISCUSSION_RATE_LIMIT: () => DISCUSSION_RATE_LIMIT,
   GLOBAL_QUERY_CACHE: () => GLOBAL_QUERY_CACHE,
+  MAX_FUTURE_SECONDS: () => MAX_FUTURE_SECONDS,
   PAY_TO_RELAY_ENABLED: () => PAY_TO_RELAY_ENABLED,
   PUBKEY_RATE_LIMIT: () => PUBKEY_RATE_LIMIT,
   RELAY_ACCESS_PRICE_SATS: () => RELAY_ACCESS_PRICE_SATS,
@@ -276,6 +277,7 @@ var allowedEventKinds = new Set(
 );
 var DISCUSSION_KINDS = /* @__PURE__ */ new Set([3587, 3588, 3591, 3592]);
 var DISCUSSION_RATE_LIMIT = { rate: 10 / 6e4, capacity: 20 };
+var MAX_FUTURE_SECONDS = 10 * 60;
 var ALLOWED_DAO_IDS = [];
 var blockedContent = /* @__PURE__ */ new Set([]);
 var checkValidNip05 = false;
@@ -5755,6 +5757,10 @@ var _RelayWebSocket = class _RelayWebSocket {
       }
       if (!event.id || !event.pubkey || !event.sig || !event.created_at || event.kind === void 0 || !Array.isArray(event.tags) || event.content === void 0 || event.content === null) {
         this.sendOK(session.webSocket, event.id || "", false, "invalid: missing required fields");
+        return;
+      }
+      if (event.created_at > Math.floor(Date.now() / 1e3) + MAX_FUTURE_SECONDS) {
+        this.sendOK(session.webSocket, event.id, false, "invalid: created_at is too far in the future");
         return;
       }
       if (event.kind === 22242) {

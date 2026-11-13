@@ -24,6 +24,9 @@ export function errText(e: unknown): string {
   return t('error.generic', { msg });
 }
 
+/** Warn when the phone's clock is this far from the app's time (the app still uses the correct time). */
+const CLOCK_WARN_MS = 2 * 60_000;
+
 export function Header(props: { sub?: string; tabs?: ComponentChildren }) {
   const app = useApp();
   const site = app.site;
@@ -57,6 +60,9 @@ export function Header(props: { sub?: string; tabs?: ComponentChildren }) {
       ) : (
         <div class="banner">{t('banner.trial')}</div>
       ))}
+      {app.clockOffset !== undefined && Math.abs(app.clockOffset) >= CLOCK_WARN_MS && (
+        <div class="banner">{t(app.clockOffset > 0 ? 'banner.clockSlow' : 'banner.clockFast', { min: Math.round(Math.abs(app.clockOffset) / 60_000) })}</div>
+      )}
       {app.dao?.closed && (
         <div class="closedbar"><strong>{t('closed.title', { dao: site!.name })}</strong> {t('closed.text')}</div>
       )}

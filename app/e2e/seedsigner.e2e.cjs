@@ -208,7 +208,7 @@ print(d.derive(0).address(NETWORKS["test"]))`]).toString().trim();
     await p.page.getByText('Il tuo voto: Sì.').waitFor({ timeout: 15000 });
   }
   log('Waiting for the close of the vote (~2 min)');
-  await new Promise(r => setTimeout(r, 135000));
+  await new Promise(r => setTimeout(r, 150000));
   await open(a, '#/council');
   await a.waitForTimeout(3000);
   await open(a, '#/');

@@ -157,7 +157,7 @@ async function claim(page, pid, address) {
   await vote([A, B, C, F], staged);
   await vote([A, B, C, F], bounty);
   log('Waiting for the close (~2 min)');
-  await new Promise(r => setTimeout(r, 135000));
+  await new Promise(r => setTimeout(r, 150000));
   await open(a, '#/council');
   await a.waitForTimeout(3000);
 

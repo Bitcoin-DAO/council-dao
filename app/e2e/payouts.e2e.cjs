@@ -117,9 +117,9 @@ async function signUp(page, name, council, wrongWords = false) {
     await p.page.getByText(/Il tuo voto:/).waitFor({ timeout: 15000 });
   }
   log('Waiting for the close (~2 min)');
-  await new Promise(r => setTimeout(r, 135000));
+  await new Promise(r => setTimeout(r, 150000));
   await open(a, '#/council');
-  await a.waitForTimeout(3000); // the council phone publishes the count
+  await a.waitForTimeout(3000); // the council phone publishes the count (it waits a tenth of the vote after the close)
   await open(f, `#/p/${pid}`);
   check(await seen(f.getByText(/entra nel prossimo giro/)), 'payout waiting for the round');
   await open(f, '#/');

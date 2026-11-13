@@ -8,7 +8,7 @@ import { broadcast, loadTreasury, sendToMissing, txDepth, txStatus, type Broadca
 import { finalizeRound } from './core/round';
 import type { RoundView } from './core/state';
 import { prfSalt, pubkeyOf, treasuryKeyFromMnemonic, unwrapSecret, wrapSecret } from './core/identity';
-import { parseJson } from './core/util';
+import { nowSec, offsetFromDate, parseJson, setClockOffset } from './core/util';
 import { t } from './i18n';
 import { query, publish, type PublishResult } from './lib/relays';
 import { createPasskey, credTagOf, getPrf } from './lib/passkey';
@@ -34,6 +34,8 @@ export interface AppState {
   treasuryLoading?: boolean;
   lang: Lang;
   lastSync?: number;
+  /** How far the phone's clock is from the app's time, in ms (positive: the phone is slow). */
+  clockOffset?: number;
 }
 
 let state: AppState = { loading: true, events: [], lang: prefs.lang() ?? (navigator.language?.startsWith('it') ? 'it' : 'en') };
@@ -89,6 +91,8 @@ function derive(events: Event[], extra: Partial<AppState> = {}) {
 }
 
 const tallied = new Set<string>();
+/** Seconds after a vote's close before a council phone publishes the count (a tenth of a shorter, practice vote). */
+const TALLY_GRACE = 90;
 /** When this phone last broadcast each round's transaction. */
 const broadcasted = new Map<string, number>();
 /** A broadcast that no source has seen after this long is sent again. */
@@ -185,19 +189,25 @@ async function autoTally() {
   const { dao, secret, isCouncil } = state;
   if (!dao || !secret || !isCouncil) return;
   for (const p of dao.proposals) {
-    if (p.status !== 'awaiting_tally' || tallied.has(p.event.id)) continue;
-    tallied.add(p.event.id);
+    const key = `${p.event.id}:${p.recount.counted.length + p.recount.excluded.length}`;
+    if (!(p.status === 'awaiting_tally' || p.fuller) || tallied.has(key)) continue;
+    // Votes sent just before the close may still be on their way to the relays: count a little after it, so two
+    // council phones do not publish different counts (a dispute, 4.4).
+    if (dao.now < p.closeAt + Math.min(TALLY_GRACE, Math.round(p.rules.votingPeriodDays * 8640))) continue;
+    tallied.add(key);
     try {
       await signAndPublish(KIND.tally, p.recount, [['e', p.event.id]]);
     } catch {
-      tallied.delete(p.event.id);
+      tallied.delete(key);
     }
   }
 }
 
 export async function init() {
   try {
+    const sent = Date.now();
     const r = await fetch('./dao.json', { cache: 'no-store' });
+    readClock(r, sent);
     if (!r.ok) throw new Error(`dao.json ${r.status}`);
     const site = (await r.json()) as SiteConfig;
     const bad = stageError(site);
@@ -213,9 +223,31 @@ export async function init() {
   }
 }
 
+let lastClock = 0;
+/** The app's time (protocol 1): the site's server says what time it is; the phone's own clock only measures the gap. */
+function readClock(r: Response, sent: number) {
+  const off = offsetFromDate(r.headers.get('date'), sent, Date.now());
+  if (off === undefined) return;
+  lastClock = Date.now();
+  setClockOffset(off);
+  setState({ clockOffset: off });
+}
+const CLOCK_EVERY_MS = 10 * 60_000;
+async function checkClock() {
+  if (Date.now() - lastClock < CLOCK_EVERY_MS) return;
+  lastClock = Date.now();
+  try {
+    const sent = Date.now();
+    readClock(await fetch('./dao.json', { method: 'HEAD', cache: 'no-store' }), sent);
+  } catch {
+    // keep the last offset
+  }
+}
+
 export async function sync() {
   const site = state.site;
   if (!site) return;
+  void checkClock();
   const events = await fetchEvents(site);
   const pending = await store.getPending(site.site);
   const dao = rebuild(site, events, pending?.pubkey);
@@ -336,7 +368,7 @@ export async function signAndPublish(kind: number, content: unknown, tags: strin
   const me = pubkeyOf(secret);
   const subject = tags.find(x => x[0] === 'e')?.[1];
   const last = Math.max(0, ...state.events.filter(e => e.pubkey === me && e.kind === kind && e.tags.find(x => x[0] === 'e')?.[1] === subject).map(e => e.created_at));
-  const event = sign(template(kind, daoId, content, tags, Math.max(Math.floor(Date.now() / 1000), last + 1)), secret);
+  const event = sign(template(kind, daoId, content, tags, Math.max(nowSec(), last + 1)), secret);
   const result = await publish(relaysOf(state.site), event);
   if (!result.ok.length) throw new Error('publish-failed: ' + result.failed.map(f => f.reason).join('; '));
   derive([...state.events, event]);

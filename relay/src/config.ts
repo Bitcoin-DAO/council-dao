@@ -117,6 +117,11 @@ export const allowedEventKinds = new Set<number>(
 export const DISCUSSION_KINDS = new Set<number>([3587, 3588, 3591, 3592]); // drafts, posts, reports, claims
 export const DISCUSSION_RATE_LIMIT = { rate: 10 / 60000, capacity: 20 }; // 10 a minute, bursts of 20
 
+// btc-dao: the app dates every event by its own corrected time (it reads the time from the site's server), so an
+// honest event is within seconds of the relay's clock. Refuse events dated further ahead than this: a backstop
+// against a broken or dishonest app stretching a vote by dating its proposal in the future.
+export const MAX_FUTURE_SECONDS = 10 * 60;
+
 // btc-dao: every event must carry ["D", <dao_id>]. Leave the list empty until
 // a genesis exists (any 64-hex D tag is then accepted); after each founding,
 // add that DAO's id and redeploy. One relay can serve a DAO's practice and

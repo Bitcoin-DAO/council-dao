@@ -231,7 +231,7 @@ export function ProposalDetail({ id }: { id: string }) {
           {p.tally && <p class="small">{t('pd.tally', { names: [...new Set(p.tally.events.map(e => nameOf(e.pubkey)))].join(', ') })}</p>}
           {p.tallyMismatch && <p class="warnbox">{t('pd.tallyMismatch')}</p>}
           {p.untallied.length > 0 && <p class="warnbox">{t('pd.untallied')}</p>}
-          {p.status === 'disputed' && <p class="warnbox">{t('pd.disputedText', { m })}</p>}
+          {p.status === 'disputed' && <p class="warnbox">{t('pd.disputedText')}</p>}
           {msg && <p class="warnbox">{msg}</p>}
         </section>
 

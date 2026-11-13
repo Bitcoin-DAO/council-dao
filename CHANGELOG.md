@@ -2,6 +2,28 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.8.3 · 13 November 2026
+
+Found on COUNCIL DAO: two council phones published different final counts (one had not yet received a vote sent just before the close), and the proposal was stuck as disputed.
+
+**Counts** (protocol 4.4)
+- **The fuller count wins.** A count lists the votes it saw. When two counts differ, the one that saw every vote the other saw, and more, is the result: the other merely missed votes. Nobody chooses between counts; council approval of counts is gone from the protocol.
+- **Counts correct themselves.** Within 10 minutes of the first count, a council phone that sees more votes than any count published publishes its own, which then wins. Counts dated later change nothing.
+- **Counting waits after the close:** 90 seconds (a tenth of the vote in short practice votes) so votes sent just before the close reach the relays first.
+- "Disputed" is left only for counts that each missed a different vote, or a count that does not add up; nothing is paid on such a proposal.
+
+**The app's time**
+- The app dates every vote, proposal and count, and decides when a vote is open or closed, by its own time: the phone's clock corrected by the time the site's server sends with each file (read on loading and every 10 minutes). A phone whose clock is off (as in "closes in 14 minutes" on a 10-minute vote) now dates its votes correctly.
+- A note at the top when the phone's clock is 2 minutes or more off.
+- The relay refuses events dated more than 10 minutes ahead of its clock (a backstop against a broken or tampered app).
+
+**Other**
+- **One proposal per form:** a second tap, or a retry after the address confirmation failed, no longer publishes the proposal again; the app opens the published proposal, where the address can be confirmed.
+
+**Tests**
+- Unit: the fuller count wins and settles; a different count that saw no more votes is a dispute; a count after the settle window changes nothing; the clock offset from a Date header.
+- End-to-end: the suites wait past the close plus the counting pause.
+
 ## v0.8.2 · 13 November 2026
 
 - **Paid in tranches:** with two or more tranches, the remove button (✕) took the whole row and squeezed the amount and days fields to nothing on a phone. It keeps its own small width now. The end-to-end test checks the fields' width and that the page has no sideways scroll.

@@ -6,6 +6,7 @@ import { KIND } from '../core/events';
 import { POST_MAX, timeline, type DraftContent, type DraftVersion, type Thread } from '../core/discussion';
 import { proposalLabel, proposalSchemaError, type DaoState, type Output, type ProposalContent } from '../core/state';
 import type { ReportView } from '../core/delivery';
+import { nowSec } from '../core/util';
 import { Footer, Header, askConfirm, errText, go } from './parts';
 import { statusText, typeLabel, useNameOf } from './Proposals';
 
@@ -20,7 +21,7 @@ export function lastSeen(daoId: string, id: string): number {
 }
 function markSeen(daoId: string, id: string) {
   try {
-    localStorage.setItem(seenKey(daoId, id), String(Math.floor(Date.now() / 1000)));
+    localStorage.setItem(seenKey(daoId, id), String(nowSec()));
   } catch {
     /* private mode: nothing remembered */
   }

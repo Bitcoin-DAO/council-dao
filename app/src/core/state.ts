@@ -128,6 +128,8 @@ export interface ProposalView {
   recount: TallyContent;
   tally?: { events: Event[]; content: TallyContent };
   disputed: boolean;
+  /** This phone saw more votes than any count published, while counts may still change (4.4): a council phone publishes its own. */
+  fuller: boolean;
   tallyMismatch: boolean;
   untallied: string[]; // votes dated before close that the tally neither counts nor excludes
   status: ProposalStatus;
@@ -684,14 +686,22 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         g.events.push(t);
         groups.set(key, g);
       }
+      // 4.4: the fuller count wins. A count that saw every vote another saw, and more, settles it; counts published
+      // more than TALLY_SETTLE after the first one cannot change the result.
       let tally: ProposalView['tally'];
       let disputed = false;
-      if (groups.size === 1) tally = [...groups.values()][0];
-      else if (groups.size > 1) {
-        const winner = [...groups.values()].find(g => g.events.some(t => endorsedBy(t, 'tally', hashJson(parseJson(t.content))).at !== undefined));
-        if (winner) tally = winner;
-        else disputed = true;
-      }
+      const firstAt = Math.min(...[...groups.values()].flatMap(g => g.events.map(t => t.created_at)));
+      const settleAt = groups.size ? firstAt + TALLY_SETTLE : Infinity;
+      const inTime = [...groups.values()]
+        .map(g => ({ ...g, events: g.events.filter(t => t.created_at <= settleAt) }))
+        .filter(g => g.events.length > 0);
+      const fullest = inTime.filter(g => inTime.every(o => isSubset(knownOf(o.content), knownOf(g.content))));
+      if (fullest.length === 1) tally = { events: fullest[0].events, content: fullest[0].content };
+      else if (fullest.length > 1 || inTime.length > 1) disputed = true;
+      // A council phone whose own count saw more than every count published, while counts may still change, publishes it.
+      const recountKnown = knownOf(recount);
+      const fuller = now >= closeAt && now <= settleAt && inTime.length > 0 && !inTime.some(g => tallyKey(g.content) === tallyKey(recount))
+        && inTime.every(g => isSubset(knownOf(g.content), recountKnown));
       const tallyMismatch = !!tally && tallyKey(tally.content) !== tallyKey(recount);
       const untallied = tally
         ? votes.filter(v => tagValue(v, 'e') === e.id && v.created_at <= closeAt && !tally!.content.counted.includes(v.id) && !tally!.content.excluded.some(x => x.id === v.id)).map(v => v.id)
@@ -717,7 +727,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         && standingList.some(x => x.address === a && personOf(x.event.pubkey) === personOf(memberOf.get(a)!) && x.event.created_at <= now));
       return {
         event: e, content: c, number, closeAt, rules, rosterVersion: rv.content.version, settingsVersion: sv.content.version,
-        eligible, votes: latest, counts, quorumNeeded, twoThirds, recount, tally, disputed, tallyMismatch, untallied, status,
+        eligible, votes: latest, counts, quorumNeeded, twoThirds, recount, tally, disputed, fuller, tallyMismatch, untallied, status,
         addresses, confirmations, byStanding, standingMoved, confirmed: confirmedAt(now), confirmedAt,
       };
     });
@@ -1227,6 +1237,12 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
     personOf, keyOf, isCouncilAt, memberAt, rosterAt, settingsAt, isTreasuryAddress, standingAt,
   };
 }
+
+/** After the first count, how long a fuller count can still settle the result (4.4). */
+export const TALLY_SETTLE = 600;
+/** The votes a count saw: those it counted and those it set aside. */
+const knownOf = (t: TallyContent) => new Set([...t.counted, ...t.excluded.map(x => x.id)]);
+const isSubset = (a: Set<string>, b: Set<string>) => [...a].every(x => b.has(x));
 
 function tallyKey(t: TallyContent): string {
   return hashJson({

@@ -196,7 +196,7 @@ async function councilAction(page, buttonName) {
   check(!(await n.getByText('Sì', { exact: true }).isVisible()), 'candidate cannot vote');
 
   log('Waiting for the close (~2 min), then council phones count automatically');
-  await new Promise(r => setTimeout(r, 135000));
+  await new Promise(r => setTimeout(r, 150000));
   await open(a, '#/proposals');
   await a.getByRole('button', { name: 'Chiuse' }).click();
   await a.waitForTimeout(3000);

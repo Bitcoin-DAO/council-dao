@@ -1,5 +1,5 @@
 // New proposal (protocol 4.1). New members go through the sponsor flow instead.
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { signAndPublish, useApp } from '../app';
 import { fmtSats, t } from '../i18n';
 import { KIND } from '../core/events';
@@ -103,6 +103,9 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
   const [reportReq, setReportReq] = useState(init.report);
   const [msg, setMsg] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // One proposal per form: a second tap, or a retry after the address confirmation failed, never publishes it again.
+  const sending = useRef(false);
+  const published = useRef<string | undefined>(undefined);
 
   if (s.closed) {
     return (
@@ -207,6 +210,8 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
   const nextVersion = (thread?.versions.length ?? 0) + 1;
 
   const publish = async () => {
+    if (sending.current) return;
+    sending.current = true;
     setMsg(undefined);
     setBusy(true);
     try {
@@ -216,12 +221,19 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
         go(`/d/${draftId}`);
         return;
       }
-      const { event } = await signAndPublish(KIND.proposal, content);
-      if (iAm && !bounty && !(type === 'payout' && payee && payeeStanding?.address === addr) && (type === 'payout' || type === 'close')) await signAndPublish(KIND.confirm, { address: addr }, [['e', event.id]]);
-      go(`/p/${event.id}`);
+      const id = published.current ?? (published.current = (await signAndPublish(KIND.proposal, content)).event.id);
+      if (iAm && !bounty && !(type === 'payout' && payee && payeeStanding?.address === addr) && (type === 'payout' || type === 'close')) {
+        try {
+          await signAndPublish(KIND.confirm, { address: addr }, [['e', id]]);
+        } catch {
+          // The proposal is out: confirm the address from its page instead of publishing the proposal again.
+        }
+      }
+      go(`/p/${id}`);
     } catch (e) {
       setMsg(errText(e));
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   };
