@@ -199,7 +199,7 @@ function SweepAction({ descriptor }: { descriptor: string }) {
   if (keys < threshold) return <p class="warnbox">{t('home.unsweepable')}</p>;
   const open = openSweeps(s).find(r => r.content.sweep === descriptor);
   return open
-    ? <a class="btn secondary" href={`#/round/${open.event.id}`}>{t('home.sweepOpen')}</a>
+    ? <button type="button" class="btn secondary" onClick={() => go(`/round/${open.event.id}`)}>{t('home.sweepOpen')}</button>
     : <button type="button" class="btn secondary" onClick={() => startSweep(descriptor)}>{t('home.sweep')}</button>;
 }
 

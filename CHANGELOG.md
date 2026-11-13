@@ -2,6 +2,13 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.8.1 · 13 November 2026
+
+Fixes found while testing v0.8.0 on COUNCIL DAO.
+- **Slow first load:** one relay that connected but never answered held the page on "Loading…" until the next 30-second refresh. Each read from the relays now ends after at most about 6.5 seconds with whatever arrived.
+- **Paid in tranches:** ticking the box now scrolls the tranche fields into view (on a phone they opened below the screen), and the tranche row (amount, days) fits a phone screen.
+- **Home:** "Sweep open: sign" is a button, centred, without the underline.
+
 ## v0.8.0 · 12 November 2026
 
 **Paid on delivery** (protocol 4.6): staged payouts and bounties.

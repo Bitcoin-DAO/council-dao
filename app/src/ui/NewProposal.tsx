@@ -291,7 +291,12 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
               payeeStanding?.address === addr ? <p class="ok">{t('np.standingUsed', { name: payee.name })}</p>
                 : <p class="small">{t(payeeStanding ? 'np.standingOther' : 'np.noStanding', { name: payee.name })}</p>
             )}
-            <label class="check"><input type="checkbox" checked={staged} onChange={e => setTranches((e.target as HTMLInputElement).checked ? [{ amount: amount, days: '30' }] : [])} />{t('np.staged')}</label>
+            <label class="check"><input type="checkbox" checked={staged} onChange={e => {
+              const on = (e.target as HTMLInputElement).checked;
+              setTranches(on ? [{ amount: amount, days: '30' }] : []);
+              // On a phone the tranche fields open below the screen's edge: bring them into view.
+              if (on) setTimeout(() => document.getElementById('tranches')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+            }} />{t('np.staged')}</label>
             {staged ? (
               <>
                 <TrancheEditor tranches={tranches} setTranches={setTranches} max={limitTranches} maxDays={limitDays} practice={(s.rules?.votingPeriodDays ?? 7) < 1} />
@@ -472,12 +477,12 @@ function TrancheEditor(props: { tranches: { amount: string; days: string }[]; se
   const { tranches, setTranches } = props;
   const set = (k: number, f: 'amount' | 'days', v: string) => setTranches(tranches.map((x, i) => (i === k ? { ...x, [f]: v.replace(/[^\d]/g, '') } : x)));
   return (
-    <div class="stack" style="gap:8px">
+    <div id="tranches" class="stack" style="gap:8px">
       <span class="small">{t('np.trancheHint', { n: props.max, d: props.maxDays })}{props.practice ? ` ${t('np.tranchePractice')}` : ''}</span>
       {tranches.map((x, k) => (
         <div class="row" style="gap:8px;align-items:flex-end">
-          <label class="field" style="flex:2">{t('np.trancheAmount', { n: k + 1 })}<input type="text" inputMode="numeric" value={x.amount} onInput={e => set(k, 'amount', (e.target as HTMLInputElement).value)} /></label>
-          <label class="field" style="flex:1">{t('np.trancheDays')}<input type="text" inputMode="numeric" value={x.days} onInput={e => set(k, 'days', (e.target as HTMLInputElement).value)} /></label>
+          <label class="field" style="flex:2;min-width:0">{t('np.trancheAmount', { n: k + 1 })}<input type="text" style="width:100%;min-width:0" inputMode="numeric" value={x.amount} onInput={e => set(k, 'amount', (e.target as HTMLInputElement).value)} /></label>
+          <label class="field" style="flex:1;min-width:0">{t('np.trancheDays')}<input type="text" style="width:100%;min-width:0" inputMode="numeric" value={x.days} onInput={e => set(k, 'days', (e.target as HTMLInputElement).value)} /></label>
           {tranches.length > 1 && <button type="button" class="btn link" aria-label={t('np.trancheRemove')} onClick={() => setTranches(tranches.filter((_, i) => i !== k))}>✕</button>}
         </div>
       ))}
