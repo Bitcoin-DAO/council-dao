@@ -483,7 +483,7 @@ function TrancheEditor(props: { tranches: { amount: string; days: string }[]; se
         <div class="row" style="gap:8px;align-items:flex-end">
           <label class="field" style="flex:2;min-width:0">{t('np.trancheAmount', { n: k + 1 })}<input type="text" style="width:100%;min-width:0" inputMode="numeric" value={x.amount} onInput={e => set(k, 'amount', (e.target as HTMLInputElement).value)} /></label>
           <label class="field" style="flex:1;min-width:0">{t('np.trancheDays')}<input type="text" style="width:100%;min-width:0" inputMode="numeric" value={x.days} onInput={e => set(k, 'days', (e.target as HTMLInputElement).value)} /></label>
-          {tranches.length > 1 && <button type="button" class="btn link" aria-label={t('np.trancheRemove')} onClick={() => setTranches(tranches.filter((_, i) => i !== k))}>✕</button>}
+          {tranches.length > 1 && <button type="button" class="btn link" style="flex:none;width:44px" aria-label={t('np.trancheRemove')} onClick={() => setTranches(tranches.filter((_, i) => i !== k))}>✕</button>}
         </div>
       ))}
       {tranches.length < props.max && (

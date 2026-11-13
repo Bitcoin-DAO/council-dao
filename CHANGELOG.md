@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.8.2 · 13 November 2026
+
+- **Paid in tranches:** with two or more tranches, the remove button (✕) took the whole row and squeezed the amount and days fields to nothing on a phone. It keeps its own small width now. The end-to-end test checks the fields' width and that the page has no sideways scroll.
+
 ## v0.8.1 · 13 November 2026
 
 Fixes found while testing v0.8.0 on COUNCIL DAO.

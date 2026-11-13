@@ -135,6 +135,10 @@ async function claim(page, pid, address) {
   await f.getByLabel('Rata 2, sats').fill('30000');
   await f.getByLabel('Giorni').nth(1).fill('2');
   check(await seen(f.getByText('Totale: 50.000 sats')), 'the form adds up the tranches');
+  await f.getByLabel('Rata 2, sats').scrollIntoViewIfNeeded();
+  await f.screenshot({ path: OUT + '/shot-two.png' });
+  check(await f.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no sideways scroll on a phone');
+  check((await f.getByLabel('Rata 2, sats').boundingBox()).width > 120, 'tranche fields keep their width with a remove button');
   await f.getByLabel(/Sono io il beneficiario/).check();
   await f.getByRole('button', { name: 'Firma e pubblica' }).click();
   await f.waitForURL(/#\/p\/[0-9a-f]{64}$/);
