@@ -2,6 +2,14 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.8.5 · 14 November 2026
+
+Found on COUNCIL DAO.
+- **Preparing a round no longer waits for earlier treasuries.** The app showed the treasury only after reading every earlier one too (four on COUNCIL DAO, one address at a time from public explorers), so "Reading the treasury's current coins…" could last minutes. The treasury in force is now shown as soon as it is read; earlier treasuries are read afterwards in the background (the sweep page still waits for them).
+- **Reading progress:** while the coins are read, the round page says how many addresses have been checked and which source is answering.
+- **A payout in tranches that lapsed part-way** now says what was paid: "1 of 2 tranches paid (1,000 sats); tranche 2 lapsed on 14 November, with no report in time. The rest can be proposed again." Before, it read as if nothing had been paid.
+- Test: the paid-on-delivery suite checks the new line.
+
 ## v0.8.4 · 14 November 2026
 
 - **Payout to a member:** choosing the member now always fills in their name as the recipient (it can still be edited). Before, a name already in the box stayed, and the browser often put the phone owner's name there. Choosing no member clears the name and the member's standing address. The name box no longer offers the browser's autofill.

@@ -209,6 +209,7 @@ async function claim(page, pid, address) {
   }
   check(lapsed, 'tranche 2 lapsed with no report');
   check(await seen(f.getByText('pagata ✓')), 'tranche 1 shows paid');
+  check(await seen(f.getByText(/^Pagate 1 rate su 2 \(/)), 'the payment line says what was paid before the lapse');
   await open(f, '#/');
   await f.waitForTimeout(3000);
   check(!(await f.getByText(/promessi in rate/).count()), 'nothing committed any more');

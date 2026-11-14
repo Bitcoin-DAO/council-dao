@@ -4,7 +4,7 @@ import { stageError, stageOf, usable, type SiteConfig } from './core/config';
 import { KIND, sign, template, type Event } from './core/events';
 import { rebuild, type DaoState, type Member } from './core/state';
 import { walletOf, parseDescriptor } from './core/descriptor';
-import { broadcast, loadTreasury, sendToMissing, txDepth, txStatus, type Broadcast, type TreasuryView, type TxStatus } from './core/chain';
+import { broadcast, loadTreasury, sendToMissing, txDepth, txStatus, type Broadcast, type TreasuryView, type ReadProgress, type TxStatus } from './core/chain';
 import { finalizeRound } from './core/round';
 import type { RoundView } from './core/state';
 import { prfSalt, pubkeyOf, treasuryKeyFromMnemonic, unwrapSecret, wrapSecret } from './core/identity';
@@ -32,6 +32,10 @@ export interface AppState {
   treasuryError?: string;
   treasuryAt?: number; // when the shown treasury was read (ms)
   treasuryLoading?: boolean;
+  /** Reading the treasury in force: addresses checked so far and the source answering. */
+  treasuryProgress?: ReadProgress;
+  /** Reading the earlier (or incoming) treasuries, after the one in force. */
+  othersLoading?: boolean;
   lang: Lang;
   lastSync?: number;
   /** How far the phone's clock is from the app's time, in ms (positive: the phone is slow). */
@@ -330,27 +334,36 @@ export function refreshTreasury(): Promise<void> {
   const daoId = state.dao?.founded?.daoId;
   if (!cfg || !daoId) return Promise.resolve();
   lastTreasuryTry = Date.now();
-  setState({ treasuryLoading: true });
+  setState({ treasuryLoading: true, treasuryProgress: { checked: 0 } });
   treasuryRead = (async () => {
     try {
       const { current, others } = treasuryDescriptors(state.dao!);
-      const view: TreasuryView = { ...(await loadTreasury(parseDescriptor(current, cfg.network), cfg.network, chainApis())), descriptor: current };
+      const view: TreasuryView = {
+        ...(await loadTreasury(parseDescriptor(current, cfg.network), cfg.network, chainApis(), undefined, p => setState({ treasuryProgress: p }))),
+        descriptor: current,
+      };
+      // The treasury in force is all a round needs: show it now, keeping the last reading of the others meanwhile
+      // (COUNCIL DAO, 14 Nov 2026: a round waited minutes for four earlier treasuries to be read).
+      const keep = state.treasury?.others;
+      setState({ treasury: { ...view, ...(keep ? { others: keep } : {}) }, treasuryAt: Date.now(), treasuryError: undefined, treasuryLoading: false, othersLoading: others.length > 0 });
       // The others one after another, after the treasury in force: public APIs throttle bursts.
-      if (others.length) view.others = [];
-      for (const o of others) {
-        try {
-          view.others!.push({ ...o, view: await loadTreasury(parseDescriptor(o.descriptor, cfg.network), cfg.network, chainApis()) });
-        } catch (e) {
-          view.others!.push({ ...o, error: String((e as Error).message ?? e) });
+      if (others.length) {
+        view.others = [];
+        for (const o of others) {
+          try {
+            view.others.push({ ...o, view: await loadTreasury(parseDescriptor(o.descriptor, cfg.network), cfg.network, chainApis()) });
+          } catch (e) {
+            view.others.push({ ...o, error: String((e as Error).message ?? e) });
+          }
         }
+        setState({ treasury: view });
       }
       treasuryCache.set(daoId, view);
-      setState({ treasury: view, treasuryAt: Date.now(), treasuryError: undefined });
     } catch (e) {
       setState({ treasuryError: String((e as Error).message ?? e) });
     } finally {
       treasuryRead = undefined;
-      setState({ treasuryLoading: false });
+      setState({ treasuryLoading: false, othersLoading: false });
       if (readAgain) {
         readAgain = false;
         void refreshTreasury();

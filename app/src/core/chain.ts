@@ -242,7 +242,13 @@ async function get<T>(apis: string[], path: string, f: Fetcher, until = Infinity
   throw new Error(`${path.replace(/\/[0-9a-z]{20,}/gi, '/…')}: ${msg}`);
 }
 
-export async function loadTreasury(d: ParsedDescriptor, network: Network, apis: string[], f: Fetcher = defaultFetch): Promise<TreasuryView> {
+/** Progress of a treasury read, for the page: addresses checked so far and the source that last answered. */
+export interface ReadProgress {
+  checked: number;
+  source?: string;
+}
+
+export async function loadTreasury(d: ParsedDescriptor, network: Network, apis: string[], f: Fetcher = defaultFetch, onProgress?: (p: ReadProgress) => void): Promise<TreasuryView> {
   let balance = 0;
   let unconfirmed = 0;
   const used: string[] = [];
@@ -255,6 +261,7 @@ export async function loadTreasury(d: ParsedDescriptor, network: Network, apis: 
   const live = f === defaultFetch;
   const until = live ? Date.now() + READ_BUDGET_MS : Infinity;
   const BATCH = live ? 1 : 5;
+  let checked = 0;
   for (const branch of [0, 1] as const) {
     let gap = 0;
     for (let i = 0; gap < GAP; i += BATCH) {
@@ -263,6 +270,8 @@ export async function loadTreasury(d: ParsedDescriptor, network: Network, apis: 
       const stats = await Promise.all(
         batch.map(a => get<{ chain_stats: AddrStats; mempool_stats: AddrStats }>(apis, `/address/${a}`, f, until)),
       );
+      checked += batch.length;
+      onProgress?.({ checked, source: lastAnswer ? sourceLabel(lastAnswer.api, lastAnswer.upstream) : undefined });
       stats.forEach((s, k) => {
         const txs = s.chain_stats.tx_count + s.mempool_stats.tx_count;
         if (txs === 0) {
