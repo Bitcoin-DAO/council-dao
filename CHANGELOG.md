@@ -2,6 +2,12 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.8.4 · 14 November 2026
+
+- **Payout to a member:** choosing the member now always fills in their name as the recipient (it can still be edited). Before, a name already in the box stayed, and the browser often put the phone owner's name there. Choosing no member clears the name and the member's standing address. The name box no longer offers the browser's autofill.
+- Test: the payouts end-to-end suite checks both.
+- Docs: descriptor floor (protocol 6.5), descriptor chain (6.6) and the watcher, from pull request #2; weakening is a broken floor line or a lower threshold.
+
 ## v0.8.3 · 13 November 2026
 
 Found on COUNCIL DAO: two council phones published different final counts (one had not yet received a vote sent just before the close), and the proposal was stuck as disputed.

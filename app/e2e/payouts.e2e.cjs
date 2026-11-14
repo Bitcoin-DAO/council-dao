@@ -102,6 +102,14 @@ async function signUp(page, name, council, wrongWords = false) {
   await open(f, '#/new');
   await f.getByLabel('Titolo', { exact: true }).fill('Workshop wallet');
   await f.getByLabel('Testo vincolante').fill('Rimborso del materiale per il workshop.');
+  // Choosing a member names the recipient, even over a name already there (a browser's autofill).
+  await f.getByLabel('Nome del beneficiario').fill('Il proprietario del telefono');
+  const picker = f.getByLabel('Il pagamento è per un membro (facoltativo)');
+  await picker.selectOption({ index: 1 });
+  const chosen = (await picker.locator('option:checked').textContent()).trim();
+  check(chosen.length > 0 && (await f.getByLabel('Nome del beneficiario').inputValue()) === chosen, 'choosing a member fills in their name');
+  await picker.selectOption({ index: 0 });
+  check((await f.getByLabel('Nome del beneficiario').inputValue()) === '', 'no member chosen: the name is cleared');
   await f.getByLabel('Indirizzo bitcoin del beneficiario').fill(RECIPIENT);
   await f.getByLabel('Importo in sats').fill('120000');
   check(await seen(f.getByText('Per pubblicare manca ancora: Nome del beneficiario.')), 'disabled publish says what is missing');

@@ -245,8 +245,13 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
     setForMember(key);
     const st = key ? s.standingAt(key, s.now) : undefined;
     const m = s.members.find(x => x.key === key);
+    const prev = s.members.find(x => x.key === forMember);
     if (st) setAddress(st.address);
-    if (m && !recipient.trim()) setRecipient(m.name);
+    else if (prev && address === s.standingAt(prev.key, s.now)?.address) setAddress('');
+    // The member chosen names the recipient (editable after); the browser's autofill (often the phone owner's
+    // name) or the previous member's name must not stay.
+    if (m) setRecipient(m.name);
+    else if (prev && recipient.trim() === prev.name) setRecipient('');
   };
 
   return (
@@ -296,7 +301,7 @@ export function NewProposal({ draftId }: { draftId?: string } = {}) {
                 {s.members.map(m => <option value={m.key}>{m.name}</option>)}
               </select>
             </label>
-            <label class="field">{t('np.recipient')}<input type="text" maxLength={80} value={recipient} onInput={e => setRecipient((e.target as HTMLInputElement).value)} /></label>
+            <label class="field">{t('np.recipient')}<input type="text" maxLength={80} autoComplete="off" value={recipient} onInput={e => setRecipient((e.target as HTMLInputElement).value)} /></label>
             <label class="field">{t('np.address')}<input type="text" class="mono" autoComplete="off" spellcheck={false} value={address} onInput={e => setAddress((e.target as HTMLInputElement).value)} /></label>
             {addrError && <p class="error">{addrError}</p>}
             {payee && addr && !addrError && (
