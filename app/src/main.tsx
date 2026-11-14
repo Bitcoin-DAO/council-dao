@@ -1,4 +1,4 @@
-import { render } from 'preact';
+import { Component, render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import '@fontsource/ibm-plex-sans/400.css';
 import '@fontsource/ibm-plex-sans/500.css';
@@ -54,6 +54,32 @@ const routes: Record<string, () => preact.JSX.Element> = {
 
 const currentPath = () => location.hash.replace(/^#/, '') || '/';
 
+/** Pages that make sense before the DAO is founded; any other link opened then shows how to join (review U-8). */
+const BEFORE_FOUNDING = new Set(['/', '/join', '/founder', '/setup', '/restore', '/qrtest', '/history']);
+
+/** A page that still throws shows a message and a way back, never a blank screen. */
+class Guard extends Component<{ children: ComponentChildren; path: string }, { failed?: string }> {
+  state: { failed?: string } = {};
+  componentDidCatch(e: unknown) {
+    this.setState({ failed: String((e as Error)?.message ?? e) });
+  }
+  componentDidUpdate(prev: { path: string }) {
+    if (prev.path !== this.props.path && this.state.failed) this.setState({ failed: undefined });
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div class="app">
+        <Header />
+        <main>
+          <p class="warnbox">{t('error.page', { msg: this.state.failed })}</p>
+          <button type="button" class="btn secondary" onClick={() => { this.setState({ failed: undefined }); location.hash = '#/'; }}>{t('error.toHome')}</button>
+        </main>
+      </div>
+    );
+  }
+}
+
 function App() {
   const app = useApp();
   const [path, setPath] = useState(currentPath());
@@ -88,15 +114,17 @@ function App() {
       </div>
     );
   }
+  // Before the founding, only the founding pages; any other link shows how to join (review U-8).
+  if (!app.daoId && !BEFORE_FOUNDING.has(path)) return <Guard path={path}><div class="app"><Join /></div></Guard>;
   const param = path.match(/^\/(p|confirm|round)\/([0-9a-f]{64})$/);
   if (param) {
     const [, kind, id] = param;
-    return <div class="app">{kind === 'p' ? <ProposalDetail id={id} /> : kind === 'confirm' ? <Confirm id={id} /> : <RoundDetail id={id} />}</div>;
+    return <Guard path={path}><div class="app">{kind === 'p' ? <ProposalDetail id={id} /> : kind === 'confirm' ? <Confirm id={id} /> : <RoundDetail id={id} />}</div></Guard>;
   }
   const thread = path.match(/^\/d\/([0-9a-f]{64})(\/version)?$/);
-  if (thread) return <div class="app">{thread[2] ? <NewProposal draftId={thread[1]} /> : <ThreadView id={thread[1]} />}</div>;
+  if (thread) return <Guard path={path}><div class="app">{thread[2] ? <NewProposal draftId={thread[1]} /> : <ThreadView id={thread[1]} />}</div></Guard>;
   const Screen = routes[path] ?? Home;
-  return <div class="app"><Screen /></div>;
+  return <Guard path={path}><div class="app"><Screen /></div></Guard>;
 }
 
 render(<App />, document.getElementById('root')!);

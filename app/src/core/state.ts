@@ -1,11 +1,11 @@
 // Rebuilding the DAO from events (protocol 8): genesis, rosters, settings, membership events,
 // proposals, confirmations, votes and tallies. Pure: the same events give the same state everywhere.
 import { Address } from '@scure/btc-signer';
-import type { CouncilEntry, DaoConfig, Network, Rules, SiteConfig } from './config';
+import { ruleValueError, type CouncilEntry, type DaoConfig, type Network, type Rules, type SiteConfig } from './config';
 import { KIND, byTime, tagValue, verified, type Event } from './events';
 import { btcNetwork, parseDescriptor, sameWallet, treasuryAddress } from './descriptor';
 import { shortCode } from './shortcode';
-import { hashJson, nowSec, parseJson } from './util';
+import { hashJson, nowSec, parseJson, safeTimeZone, validTimeZone } from './util';
 import { maxScheduleDays, REPORT_MAX, scheduleDay, scheduleRulesError, scheduleShapeError, type ClaimView, type ReportView, type Tranche, type TrancheView } from './delivery';
 import { inspectRound, memberSignatures, RECEIVE_WINDOW, type RoundContent, type RoundInspection } from './round';
 import { cadenceOf, roundDatesAfter } from './time';
@@ -237,7 +237,8 @@ export interface DaoState {
   /** Approved tranches neither paid nor lapsed (4.6.5). */
   committed: number;
   closed: boolean;
-  keywraps: Map<string, { pubkey: string; nonce: string; ct: string; at: number }>;
+  /** Passkey backups per credential tag, newest first. Several signers may claim one tag: sign-in tries each (review I-3). */
+  keywraps: Map<string, { pubkey: string; nonce: string; ct: string; at: number }[]>;
   /** Council treasury keys their holders have reported lost (dao.keystatus), for the keys in the current settings. */
   lostKeys: { person: string; fingerprint: string; at: number }[];
   /** Drafts and proposal threads (protocol 4.5). */
@@ -336,7 +337,11 @@ export function proposalSchemaError(c: ProposalContent, network: DaoConfig['netw
       return;
     case 'change_rules':
       if (!Array.isArray(p.changes) || !p.changes.length) return 'changes';
-      for (const ch of p.changes) if (!(typeof ch?.path === 'string' && /^rules\.[A-Za-z]+$/.test(ch.path) && 'from' in ch && 'to' in ch)) return 'change';
+      if (p.changes.length > 20) return 'changes';
+      for (const ch of p.changes) {
+        if (!(ch && typeof ch === 'object' && typeof ch.path === 'string' && /^rules\.[A-Za-z]+$/.test(ch.path) && 'from' in ch && 'to' in ch)) return 'change';
+        if (ruleValueError(ch.path.slice(6), ch.to, { timeZone: validTimeZone })) return 'change value';
+      }
       return;
     case 'change_council':
       return councilChangeSchemaError(p as Partial<CouncilChange>);
@@ -349,7 +354,49 @@ export function proposalSchemaError(c: ProposalContent, network: DaoConfig['netw
 // ---------- rebuild ----------
 
 /** `prefer`: a key this device signed up with; a founded genesis listing it wins over others for the same site. */
+/**
+ * Rebuild the DAO state. No event may take the app down for everyone (review R-C1): the checks in rebuildOnce
+ * should reject anything malformed, and if something still throws, the event that causes it is found (the last
+ * event of the shortest list, in time order, that still throws), set aside as rejected, and the state rebuilt
+ * without it.
+ */
 export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now = nowSec()): DaoState {
+  try {
+    return rebuildOnce(site, events, prefer, now);
+  } catch (first) {
+    let pool = [...events].sort(byTime);
+    const setAside: Event[] = [];
+    const throws = (list: Event[]) => {
+      try {
+        rebuildOnce(site, list, prefer, now);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    for (let attempt = 0; attempt < 20 && pool.length; attempt++) {
+      let lo = 1;
+      let hi = pool.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (throws(pool.slice(0, mid))) hi = mid;
+        else lo = mid + 1;
+      }
+      setAside.push(pool[hi - 1]);
+      pool = pool.filter((_, i) => i !== hi - 1);
+      try {
+        const st = rebuildOnce(site, pool, prefer, now);
+        st.rejected.push(...setAside.map(event => ({ event, reason: 'could not be read: set aside so the rest of the record can be' })));
+        return st;
+      } catch {
+        // another one: go round again
+      }
+    }
+    throw first;
+  }
+}
+
+function rebuildOnce(site: SiteConfig, events: Event[], prefer?: string, now = nowSec()): DaoState {
   const rejected: Rejected[] = [];
   const seen = new Set<string>();
   const all = events
@@ -417,7 +464,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
     version: 1,
     members: [
       ...cfg.council.map(c => ({ key: c.identityKey, name: c.label, since: since0, verified: 'in_person' as Verified, council: true })),
-      ...cfg.founders.map(f => ({ key: f.identityKey, name: f.name, since: since0, verified: f.verified, council: false })),
+      ...(Array.isArray(cfg.founders) ? cfg.founders : []).map(f => ({ key: f.identityKey, name: f.name, since: since0, verified: f.verified, council: false })),
     ],
   };
   const settings1: SettingsContent = { version: 1, rules: cfg.rules, closed: false, council: cfg.council, threshold: cfg.threshold, descriptor: cfg.descriptor };
@@ -428,7 +475,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
   /** Round dates follow the settings in force at each moment (6.1). */
   const roundRulesAt = (t: number) => {
     const r = settingsAt(t).content.rules;
-    return { cadence: cadenceOf(r.payoutRound), tz: r.timezone || 'UTC', changes: settings.map(s => s.effectiveAt) };
+    return { cadence: cadenceOf(r.payoutRound), tz: safeTimeZone(r.timezone), changes: settings.map(s => s.effectiveAt) };
   };
 
   // Persons and keys: a key replacement moves a person to a new key from its effective time.
@@ -544,7 +591,10 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
     return { address: last.address, event: last.event };
   };
 
-  for (let iter = 0; iter < 50; iter++) {
+  // Each pass may add one roster or settings version; there are at most as many passes as those events, plus one
+  // (review R-H3: a fixed 50 stopped every DAO's chains after 50 versions in total).
+  const maxPasses = ofKind(KIND.roster).length + ofKind(KIND.settings).length + 2;
+  for (let iter = 0; iter < maxPasses; iter++) {
     // rekeys in effect
     for (const r of rekeys) {
       if (r.effectiveAt !== undefined) continue;
@@ -567,9 +617,25 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
     }
 
     // leaves
+    const proposalEvents = new Map(ofKind(KIND.proposal).map(x => [x.id, x]));
+    const voteEvents = new Map(ofKind(KIND.vote).map(x => [x.id, x]));
+    const leaveContradicted = (e: Event, p: string) => ofKind(KIND.tally).some(t => {
+      if (t.created_at <= e.created_at || !isCouncilAt(t.pubkey, t.created_at)) return false;
+      const b = parseJson<TallyContent>(t.content);
+      const pe = proposalEvents.get(tagValue(t, 'e') ?? '');
+      if (!b || !tallyShapeOk(b) || !pe) return false;
+      if (personOf(pe.pubkey) === p && pe.created_at >= e.created_at) return true;
+      const closeAt = pe.created_at + Math.round(settingsAt(pe.created_at).content.rules.votingPeriodDays * 86400);
+      if (closeAt <= e.created_at) return false;
+      return b.counted.some(id => { const v = voteEvents.get(id); return !!v && personOf(v.pubkey) === p; });
+    });
     for (const e of ofKind(KIND.leave)) {
       const p = personOf(e.pubkey);
       if (leaves.has(p)) continue;
+      // 5.3: leaving takes effect from when it is said (review R-C3). A council count made after the leave's date that
+      // still counted the person (a proposal of theirs dated after it, or their vote on a proposal still open at that
+      // date) shows the leave was dated back: it is not accepted, so it cannot erase decided proposals or votes.
+      if (leaveContradicted(e, p)) continue;
       if (memberAt(e.pubkey, e.created_at) && !isCouncilAt(e.pubkey, e.created_at)) leaves.set(p, e);
     }
 
@@ -612,28 +678,27 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       }
       valid.push({ e, c: c! });
     }
-    // Tallied proposals fix the numbering: untallied proposals dated before the latest tallied one are backdated.
     const tallyEvents = ofKind(KIND.tally);
-    const hasTally = (id: string) => tallyEvents.some(t => tagValue(t, 'e') === id && isCouncilAt(t.pubkey, t.created_at));
-    const lastTallied = Math.max(-1, ...valid.filter(v => hasTally(v.e.id)).map(v => v.e.created_at));
-    const kept = valid.filter(v => {
-      if (v.e.created_at < lastTallied && !hasTally(v.e.id)) { proposalRejected.push({ event: v.e, reason: 'proposal: dated before the last tallied proposal' }); return false; }
-      return true;
-    });
-
     const votes = ofKind(KIND.vote);
-    const confirms = ofKind(KIND.confirm);
-    standingList = [];
-    for (const k of confirms.filter(k => tagValue(k, 'e') === undefined)) {
-      const b = parseJson<{ address?: string; standing?: boolean }>(k.content);
-      if (!b || typeof b.standing !== 'boolean') { proposalRejected.push({ event: k, reason: 'confirm: malformed' }); continue; }
-      if (!memberAt(k.pubkey, k.created_at)) { proposalRejected.push({ event: k, reason: 'standing address: signer is not a member' }); continue; }
-      if (b.standing && !validAddress(b.address, network)) { proposalRejected.push({ event: k, reason: 'standing address: invalid address' }); continue; }
-      if (b.standing && isTreasuryAddress(b.address!)) { proposalRejected.push({ event: k, reason: 'standing address: a treasury address' }); continue; }
-      standingList.push({ event: k, address: b.standing ? b.address : undefined });
+    // 4.4, decided means decided: when a proposal's result was first acted on, by a receipt for a round that pays it
+    // or a roster or settings version that names it in its basis.
+    const acted = new Map<string, number>();
+    const actedAt = (id: string, at: number) => { if (!(acted.get(id)! <= at)) acted.set(id, at); };
+    const roundEvents = new Map(ofKind(KIND.round).map(r => [r.id, r]));
+    for (const rc of ofKind(KIND.receipt)) {
+      const r = roundEvents.get(tagValue(rc, 'e') ?? '');
+      if (!r || !isCouncilAt(rc.pubkey, rc.created_at)) continue;
+      const ids = parseJson<{ proposals?: unknown }>(r.content)?.proposals;
+      if (Array.isArray(ids)) for (const id of ids) if (typeof id === 'string') actedAt(id, rc.created_at);
     }
-    return kept.map(({ e, c }, i) => {
-      const number = i + 1;
+    for (const v of [...rosters, ...settings]) {
+      const basis = (v.content as { basis?: unknown }).basis;
+      if (Array.isArray(basis)) for (const id of basis) if (typeof id === 'string') actedAt(id, v.effectiveAt);
+    }
+    const actedOn = (id: string) => acted.get(id);
+    const voteById = new Map(votes.map(v => [v.id, v]));
+    /** The count of a proposal over the given votes (protocol 4.4); `report` records malformed votes as rejected. */
+    const countOver = (e: Event, c: ProposalContent, number: number, list: Event[], report = false) => {
       const sv = settingsAt(e.created_at);
       const rules = sv.content.rules;
       const rv = rosterAt(e.created_at);
@@ -649,9 +714,9 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       }
       const excluded: TallyContent['excluded'] = [];
       const latest = new Map<string, { event: Event; choice: Choice }>();
-      for (const v of votes.filter(v => tagValue(v, 'e') === e.id)) {
+      for (const v of list) {
         const b = parseJson<{ choice: Choice }>(v.content);
-        if (!b || !['yes', 'no', 'abstain'].includes(b.choice)) { proposalRejected.push({ event: v, reason: 'vote: malformed' }); continue; }
+        if (!b || !['yes', 'no', 'abstain'].includes(b.choice)) { if (report) proposalRejected.push({ event: v, reason: 'vote: malformed' }); continue; }
         if (v.created_at > closeAt) { excluded.push({ id: v.id, reason: 'late' }); continue; }
         const p = personOf(v.pubkey);
         if (!eligible.has(p) || !keyActive(v.pubkey, v.created_at)) { excluded.push({ id: v.id, reason: 'not_eligible' }); continue; }
@@ -672,15 +737,67 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         excluded: excluded.sort((a, b) => (a.id < b.id ? -1 : 1)),
         result: { ...counts, quorum_met: quorumMet, passed: quorumMet && majority },
       };
+      return { sv, rules, rv, closeAt, eligible, latest, counts, quorumNeeded, twoThirds, recount };
+    };
+    /**
+     * 4.4: a tally counts only if every vote it lists is one this client holds, on this proposal, and recounting exactly
+     * those votes gives the same lists and result (review R-C2). 'wait': a listed vote has not reached this client yet.
+     */
+    const tallyCheck = (t: Event, e: Event, c: ProposalContent, b: TallyContent): 'ok' | 'wait' | 'bad' => {
+      const listed = [...b.counted, ...b.excluded.map(x => x.id)];
+      if (new Set(listed).size !== listed.length) return 'bad';
+      const list: Event[] = [];
+      for (const id of listed) {
+        const v = voteById.get(id);
+        if (!v) return 'wait';
+        if (tagValue(v, 'e') !== e.id) return 'bad';
+        list.push(v);
+      }
+      const r = countOver(e, c, b.number, list.sort(byTime)).recount;
+      return tallyKey(r) === tallyKey(b) && r.roster_version === b.roster_version && r.settings_version === b.settings_version ? 'ok' : 'bad';
+    };
+    // Tallied proposals fix the numbering: untallied proposals dated before the latest tallied one are backdated.
+    // Only a tally that checks out counts here (review R-H1: a junk tally used to reject every older open proposal).
+    const hasTally = (v: { e: Event; c: ProposalContent }) => tallyEvents.some(t => {
+      if (tagValue(t, 'e') !== v.e.id || !isCouncilAt(t.pubkey, t.created_at)) return false;
+      const b = parseJson<TallyContent>(t.content);
+      if (!b || b.proposal !== v.e.id || !tallyShapeOk(b) || t.created_at < countOver(v.e, v.c, 0, []).closeAt) return false;
+      return tallyCheck(t, v.e, v.c, b) === 'ok';
+    });
+    const tallied = new Set(valid.filter(hasTally).map(v => v.e.id));
+    const lastTallied = Math.max(-1, ...valid.filter(v => tallied.has(v.e.id)).map(v => v.e.created_at));
+    const kept = valid.filter(v => {
+      if (v.e.created_at < lastTallied && !tallied.has(v.e.id)) { proposalRejected.push({ event: v.e, reason: 'proposal: dated before the last tallied proposal' }); return false; }
+      return true;
+    });
 
+    const confirms = ofKind(KIND.confirm);
+    standingList = [];
+    for (const k of confirms.filter(k => tagValue(k, 'e') === undefined)) {
+      const b = parseJson<{ address?: string; standing?: boolean }>(k.content);
+      if (!b || typeof b.standing !== 'boolean') { proposalRejected.push({ event: k, reason: 'confirm: malformed' }); continue; }
+      if (!memberAt(k.pubkey, k.created_at)) { proposalRejected.push({ event: k, reason: 'standing address: signer is not a member' }); continue; }
+      if (b.standing && !validAddress(b.address, network)) { proposalRejected.push({ event: k, reason: 'standing address: invalid address' }); continue; }
+      if (b.standing && isTreasuryAddress(b.address!)) { proposalRejected.push({ event: k, reason: 'standing address: a treasury address' }); continue; }
+      standingList.push({ event: k, address: b.standing ? b.address : undefined });
+    }
+    return kept.map(({ e, c }, i) => {
+      const number = i + 1;
+      const { sv, rules, rv, closeAt, eligible, latest, counts, quorumNeeded, twoThirds, recount } = countOver(e, c, number, votes.filter(v => tagValue(v, 'e') === e.id), true);
       // tallies
       const groups = new Map<string, { events: Event[]; content: TallyContent }>();
       for (const t of tallyEvents.filter(t => tagValue(t, 'e') === e.id)) {
         const b = parseJson<TallyContent>(t.content);
-        if (!b || b.proposal !== e.id || b.closed_at !== closeAt || b.number !== number || t.created_at < closeAt || !isCouncilAt(t.pubkey, t.created_at) || !Array.isArray(b.counted) || !Array.isArray(b.excluded) || !b.result) {
+        if (!b || b.proposal !== e.id || b.closed_at !== closeAt || b.number !== number || t.created_at < closeAt || !isCouncilAt(t.pubkey, t.created_at) || !tallyShapeOk(b)) {
           proposalRejected.push({ event: t, reason: 'tally: invalid' });
           continue;
         }
+        const check = tallyCheck(t, e, c, b);
+        if (check === 'bad') { proposalRejected.push({ event: t, reason: 'tally: does not match the votes it lists' }); continue; }
+        if (check === 'wait') continue; // a listed vote has not arrived: the tally counts once it has
+        // 4.4: decided means decided. Once the result has been acted on, a tally dated later changes nothing.
+        const settled = actedOn(e.id);
+        if (settled !== undefined && t.created_at > settled && [...groups.values()].some(g => g.events.some(o => o.created_at <= settled))) continue;
         const key = tallyKey(b);
         const g = groups.get(key) ?? { events: [], content: b };
         g.events.push(t);
@@ -700,7 +817,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       else if (fullest.length > 1 || inTime.length > 1) disputed = true;
       // A council phone whose own count saw more than every count published, while counts may still change, publishes it.
       const recountKnown = knownOf(recount);
-      const fuller = now >= closeAt && now <= settleAt && inTime.length > 0 && !inTime.some(g => tallyKey(g.content) === tallyKey(recount))
+      const fuller = now >= closeAt && now <= settleAt && actedOn(e.id) === undefined && inTime.length > 0 && !inTime.some(g => tallyKey(g.content) === tallyKey(recount))
         && inTime.every(g => isSubset(knownOf(g.content), recountKnown));
       const tallyMismatch = !!tally && tallyKey(tally.content) !== tallyKey(recount);
       const untallied = tally
@@ -759,7 +876,7 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       if (!p || p.content.type !== 'payout' || p.status !== 'passed') { proposalRejected.push({ event: e, reason: 'report: not a passed payout' }); continue; }
       const pl = p.content.payload;
       const count = Array.isArray(pl.schedule) ? (pl.schedule as Tranche[]).length : 1;
-      if (!b || !Number.isInteger(b.tranche) || b.tranche! < 1 || b.tranche! > count || !isStr(b.text, REPORT_MAX) || (b.link !== undefined && !isStr(b.link, 500))) { proposalRejected.push({ event: e, reason: 'report: malformed' }); continue; }
+      if (!b || !Number.isInteger(b.tranche) || b.tranche! < 1 || b.tranche! > count || !isStr(b.text, REPORT_MAX) || (b.link !== undefined && !(isStr(b.link, 500) && /^https?:\/\//.test(b.link!)))) { proposalRejected.push({ event: e, reason: 'report: malformed' }); continue; }
       if (!memberAt(e.pubkey, e.created_at)) { proposalRejected.push({ event: e, reason: 'report: signer is not a member' }); continue; }
       const person = personOf(e.pubkey);
       const allowed = person === personOf(p.event.pubkey)
@@ -811,17 +928,26 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       for (const c of claims.get(p.event.id) ?? []) if (c.event.created_at <= t && people.has(c.person)) latest.set(c.person, c.address);
       return latest; // person → address
     };
-    for (const e of ofKind(KIND.round)) {
+    // Rounds with a receipt first, so nothing a confirmed round paid can look unpaid to a round dated before it
+    // (review M-F3: a backdated round used to pay a payout again).
+    const receiptFor = (id: string) => receipts.some(r => tagValue(r, 'e') === id && isCouncilAt(r.pubkey, r.created_at));
+    const roundEvs = ofKind(KIND.round);
+    for (const e of [...roundEvs.filter(r => receiptFor(r.id)), ...roundEvs.filter(r => !receiptFor(r.id))]) {
       const c = parseJson<RoundContent>(e.content);
+      const confirmedRound = receiptFor(e.id);
+      // A round with no receipt yet is judged against every payment known, not only those before its own date.
+      const asOf = confirmedRound ? e.created_at : Number.MAX_SAFE_INTEGER;
       const errors: string[] = [];
       const sv = settingsAt(e.created_at).content;
       const isSweep = !!c && typeof c.sweep === 'string';
-      if (!c || !Array.isArray(c.proposals) || (!c.proposals.length && !isSweep) || (isSweep && c.proposals.length) || typeof c.psbt !== 'string') {
+      const tranchesOk = c?.tranches === undefined || (!!c.tranches && typeof c.tranches === 'object' && !Array.isArray(c.tranches) && Object.values(c.tranches).every(n => Number.isInteger(n) && n >= 1 && n <= 10));
+      if (!c || !Array.isArray(c.proposals) || !c.proposals.every(id => typeof id === 'string' && /^[0-9a-f]{64}$/.test(id)) || (!c.proposals.length && !isSweep) || (isSweep && c.proposals.length) || typeof c.psbt !== 'string' || !tranchesOk || (c.sweep !== undefined && typeof c.sweep !== 'string')) {
         proposalRejected.push({ event: e, reason: 'round: malformed' });
         continue;
       }
       if (!isCouncilAt(e.pubkey, e.created_at)) errors.push('signer is not on the council');
       if (sv.closed) errors.push('the DAO is closed');
+      if (new Set(c.proposals).size !== c.proposals.length) errors.push('a proposal is listed twice'); // review M-F1
       // A sweep spends from an earlier treasury (a descriptor of an earlier settings version, not the same wallet).
       if (isSweep && (!settings.some(v => v.content.descriptor === c.sweep && v.content.version < sv.version) || sameWallet(c.sweep!, sv.descriptor))) errors.push('a sweep empties an earlier treasury');
       let ins: RoundInspection | undefined;
@@ -840,17 +966,18 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
         if (!p) { errors.push(`unknown proposal ${c.proposals[i].slice(0, 8)}`); continue; }
         if (p.status !== 'passed' || !['payout', 'close', 'change_council'].includes(p.content.type)) errors.push(`proposal ${p.number} is not a passed payout`);
         if (!p.confirmedAt(e.created_at)) errors.push(`proposal ${p.number} is not confirmed by its recipient`);
+        if (p.tally && e.created_at < Math.min(...p.tally.events.map(t => t.created_at))) errors.push(`proposal ${p.number}: the round is dated before its count`);
         if (p.status === 'passed' && isScheduled(p)) {
           // 4.6.2: the next tranche, reported before the round, not lapsed.
           const n = c.tranches?.[p.event.id];
           if (!Number.isInteger(n)) { errors.push(`proposal ${p.number}: the round names no tranche`); continue; }
-          if (n !== nextTranche(p, e.created_at)) errors.push(`proposal ${p.number}: tranche ${n} is not the next to pay`);
+          if (n !== nextTranche(p, asOf)) errors.push(`proposal ${p.number}: tranche ${n} is not the next to pay`);
           else if (trancheLapseAt(p, n!) <= e.created_at) errors.push(`proposal ${p.number}: tranche ${n} has lapsed`);
           else if (!reportsFor(p, n!, e.created_at).length) errors.push(`proposal ${p.number}: tranche ${n} has no report`);
           continue;
         }
         const paid = paidAt.get(p.event.id);
-        if (paid !== undefined && paid <= e.created_at) errors.push(`proposal ${p.number} is already paid`);
+        if (paid !== undefined && paid <= asOf) errors.push(`proposal ${p.number} is already paid`);
         const l = lapseAt(p);
         if (l !== undefined && e.created_at >= l) errors.push(`proposal ${p.number} has lapsed`);
       }
@@ -896,7 +1023,8 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
           && o.inspection?.inputs.some(x => r.inspection?.inputs.some(y => y.txid === x.txid && y.vout === x.vout)));
         // A sweep round is exempt both ways: it spends an earlier treasury's coins, which no other round touches.
         const open = out.filter(r => r.status === 'open' && !r.isSweep && r.event.created_at <= e.created_at && !(r.receipt && r.receipt.created_at <= e.created_at) && !settled(r));
-        if (!isSweep && open.length && !open.some(r => r.inspection?.inputs.some(x => outpoints.has(`${x.txid}:${x.vout}`)))) errors.push('another round is open');
+        // A replacement must share a coin with every round still open, so no two of them can both confirm (review M-F2).
+        if (!isSweep && !confirmedRound && open.length && !open.every(r => r.inspection?.inputs.some(x => outpoints.has(`${x.txid}:${x.vout}`)))) errors.push('another round is open');
       }
 
       // A sweep needs the earlier treasury's threshold, from current council keys that are in it.
@@ -947,11 +1075,32 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
       }
       out.push(view);
     }
-    // A round that shares a coin with a paid round can never confirm.
+    // The same transaction published as two rounds with different coin amounts is how false amounts are combined
+    // into a huge real fee (review M-F4): none of them is signed. (Identical copies of one round are harmless.)
     for (const r of out) {
-      if (r.status !== 'open') continue;
+      if (r.status !== 'open' || !r.inspection) continue;
+      const claims = (x: RoundView) => x.inspection!.inputs.map(i => i.value).join();
+      if (out.some(o => o !== r && o.inspection?.txid === r.inspection!.txid && claims(o) !== claims(r))) {
+        r.errors.push('the same transaction as another round, with other coin amounts');
+        r.status = 'invalid';
+      }
+    }
+    // A round that shares a coin with a paid round can never confirm, whatever else is wrong with it.
+    for (const r of out) {
+      if (r.status === 'paid' || !r.inspection) continue;
       const mine = new Set(r.inspection?.inputs.map(x => `${x.txid}:${x.vout}`));
       if (out.some(o => o !== r && o.status === 'paid' && o.inspection?.inputs.some(x => mine.has(`${x.txid}:${x.vout}`)))) r.status = 'void';
+    }
+    // 6.1: a payout is paid once. Two rounds that pay the same payout (or the same tranche) must spend a common coin,
+    // so that at most one can ever confirm, however they are dated. Otherwise the one without a receipt is not valid.
+    const itemsOf = (r: RoundView) => new Set(r.content.proposals.map(id => (r.content.tranches?.[id] !== undefined ? `${id}#${r.content.tranches[id]}` : id)));
+    const shareCoin = (a: RoundView, b: RoundView) => !!a.inspection && !!b.inspection && a.inspection.inputs.some(x => b.inspection!.inputs.some(y => y.txid === x.txid && y.vout === x.vout));
+    // A round set aside only by the one-open-round rule could still be signed and broadcast: it counts here too.
+    const couldPay = (o: RoundView) => o.status === 'open' || o.status === 'paid' || (o.status === 'invalid' && !!o.inspection && o.errors.length > 0 && o.errors.every(x => x === 'another round is open'));
+    const clashes = out.filter(r => r.status === 'open' && out.some(o => o !== r && couldPay(o) && [...itemsOf(o)].some(i => itemsOf(r).has(i)) && !shareCoin(o, r)));
+    for (const r of clashes) {
+      r.errors.push('another round pays the same payout from other coins');
+      r.status = 'invalid';
     }
     // An open round replaced by a later one on its coins: the later one is the round in hand.
     for (const r of out) {
@@ -1197,20 +1346,23 @@ export function rebuild(site: SiteConfig, events: Event[], prefer?: string, now 
 
   // Keywraps: signed by a key that is or was on a roster, or a verified candidate.
   const known = new Set([...rosters.flatMap(r => r.content.members.map(m => m.key)), ...personByKey.keys(), ...verifies.map(v => parseJson<any>(v.content).candidate_key as string)]);
-  const keywraps = new Map<string, { pubkey: string; nonce: string; ct: string; at: number }>();
+  const keywraps = new Map<string, { pubkey: string; nonce: string; ct: string; at: number }[]>();
   for (const e of ofKind(KIND.keywrap)) {
     const c = tagValue(e, 'c');
     const body = parseJson<{ nonce: string; ct: string }>(e.content);
-    if (!c || !body?.nonce || !body?.ct) { rejected.push({ event: e, reason: 'keywrap: malformed' }); continue; }
+    if (!c || typeof body?.nonce !== 'string' || typeof body?.ct !== 'string') { rejected.push({ event: e, reason: 'keywrap: malformed' }); continue; }
     if (!known.has(e.pubkey)) { rejected.push({ event: e, reason: 'keywrap: signer is not on the roster' }); continue; }
-    keywraps.set(c, { pubkey: e.pubkey, nonce: body.nonce, ct: body.ct, at: e.created_at });
+    if (e.created_at > now + 600) { rejected.push({ event: e, reason: 'keywrap: dated in the future' }); continue; }
+    // Every backup is kept, not only the latest: another member's junk backup under the same public tag can no
+    // longer hide the real one (review I-3). Sign-in accepts the one that opens to its own key.
+    keywraps.set(c, [{ pubkey: e.pubkey, nonce: body.nonce, ct: body.ct, at: e.created_at }, ...(keywraps.get(c) ?? [])]);
   }
 
   // Key status (protocol 5.5): the holder's latest notice about the treasury key with this fingerprint counts.
   const latestNotice = new Map<string, { lost: boolean; at: number }>();
   for (const e of ofKind(KIND.keystatus)) {
     const c = parseJson<{ fingerprint?: string; state?: string }>(e.content);
-    const fp = c?.fingerprint?.toLowerCase();
+    const fp = typeof c?.fingerprint === 'string' ? c.fingerprint.toLowerCase() : undefined;
     if (!fp || (c!.state !== 'lost' && c!.state !== 'found')) { rejected.push({ event: e, reason: 'keystatus: malformed' }); continue; }
     const entry = settingsAt(e.created_at).content.council.find(x => personOf(x.identityKey) === personOf(e.pubkey));
     if (!entry || entry.fingerprint.toLowerCase() !== fp) { rejected.push({ event: e, reason: 'keystatus: not the signer\'s council key' }); continue; }
@@ -1243,6 +1395,15 @@ export const TALLY_SETTLE = 600;
 /** The votes a count saw: those it counted and those it set aside. */
 const knownOf = (t: TallyContent) => new Set([...t.counted, ...t.excluded.map(x => x.id)]);
 const isSubset = (a: Set<string>, b: Set<string>) => [...a].every(x => b.has(x));
+
+/** Every field a tally's comparison reads has the type it needs (review R-C1: a null or 1e999 there threw). */
+function tallyShapeOk(b: TallyContent): boolean {
+  const r = b.result as unknown as Record<string, unknown> | undefined;
+  return Array.isArray(b.counted) && b.counted.every(x => typeof x === 'string')
+    && Array.isArray(b.excluded) && b.excluded.every(x => !!x && typeof x === 'object' && typeof x.id === 'string' && typeof x.reason === 'string')
+    && !!r && typeof r === 'object' && ['yes', 'no', 'abstain'].every(k => Number.isInteger(r[k]) && (r[k] as number) >= 0)
+    && typeof r.quorum_met === 'boolean' && typeof r.passed === 'boolean';
+}
 
 function tallyKey(t: TallyContent): string {
   return hashJson({

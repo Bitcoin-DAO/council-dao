@@ -46,10 +46,20 @@ export function Profile() {
       setBusy(false);
     }
   };
+  const [leaveMsg, setLeaveMsg] = useState<string>();
   const leave = async () => {
-    if (!(await askConfirm(t('profile.leaveConfirm', { dao }), t('profile.leave'), true))) return;
-    await signAndPublish(KIND.leave, {});
-    setLeft(true);
+    if (busy || !(await askConfirm(t('profile.leaveConfirm', { dao }), t('profile.leave'), true))) return;
+    // Says why if it fails, and cannot be sent twice (review U-6).
+    setLeaveMsg(undefined);
+    setBusy(true);
+    try {
+      await signAndPublish(KIND.leave, {});
+      setLeft(true);
+    } catch (e) {
+      setLeaveMsg(errText(e));
+    } finally {
+      setBusy(false);
+    }
   };
   const me = app.me;
   if (!me) {
@@ -151,8 +161,9 @@ export function Profile() {
             <h3>{t('profile.leave')}</h3>
             <p class="small">{t('profile.leaveText')}</p>
             {left ? <p class="ok">{t('profile.left', { dao })}</p> : (
-              <button type="button" class="btn secondary" onClick={leave}>{t('profile.leave')}</button>
+              <button type="button" class="btn secondary" disabled={busy} onClick={leave}>{t('profile.leave')}</button>
             )}
+            {leaveMsg && <p class="warnbox">{leaveMsg}</p>}
           </div>
         )}
         {app.secret && !app.identity?.plain && (

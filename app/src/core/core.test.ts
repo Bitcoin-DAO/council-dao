@@ -185,7 +185,7 @@ describe('founding (protocol 3.1, 3.2, 3.5)', () => {
       f.g, f.endorse(0, 1001), f.endorse(1, 1002), f.endorse(2, 1003),
       kw(f.founderSecret, 'c1', 1100, 'aa'), kw(f.founderSecret, 'c1', 1200, 'bb'), kw(newSecret(), 'c2', 1100, 'cc'),
     ]);
-    expect(s.keywraps.get('c1')?.ct).toBe('bb');
+    expect(s.keywraps.get('c1')?.[0].ct).toBe('bb'); // newest first; earlier ones kept (review I-3)
     expect(s.keywraps.has('c2')).toBe(false);
   });
 
@@ -229,5 +229,27 @@ describe('founding threshold', () => {
     expect(settleThreshold(st(3, 3, { thresholdSet: true })).threshold).toBe(3);
     expect(settleThreshold(st(2, 3, { thresholdSet: true })).threshold).toBe(2);
     expect(settleThreshold(st(3, 3, { genesisId: 'x' })).threshold).toBe(3);
+  });
+});
+
+// Review of 14 November 2026, block 6: a private key is never accepted where a council's public key is expected (I-2).
+import { checkXpub } from './descriptor';
+import { parseFounderCode } from './identity';
+import { HDKey } from '@scure/bip32';
+describe('private keys refused (review I-2)', () => {
+  const master = HDKey.fromMasterSeed(new Uint8Array(32).fill(7), { private: 0x04358394, public: 0x043587cf });
+  const acct = master.derive("m/48'/1'/0'/2'");
+  const tprv = acct.privateExtendedKey;
+  const tpub = acct.publicExtendedKey;
+  const fp = master.fingerprint.toString(16).padStart(8, '0');
+  it('checkXpub and key origins', () => {
+    expect(() => checkXpub(tprv, 'testnet4')).toThrow('xpub-private');
+    expect(() => checkXpub(tpub, 'testnet4')).not.toThrow();
+    expect(() => parseKeyOrigin(`[${fp}/48h/1h/0h/2h]${tprv}`, 'testnet4')).toThrow('xpub-private');
+  });
+  it('founder codes', () => {
+    const code = (xpub: string) => JSON.stringify({ t: 'btcdao-founder', v: 1, name: 'A', key: 'ab'.repeat(32), council: { fingerprint: fp, xpub } });
+    expect(parseFounderCode(code(tprv))).toBeUndefined();
+    expect(parseFounderCode(code(tpub))).toBeTruthy();
   });
 });

@@ -182,6 +182,17 @@ function blockbookRequest(base: string, path: string): Request | undefined {
       },
     };
   }
+  if ((m = path.match(/^\/tx\/([0-9a-f]{64})$/))) {
+    const id = m[1];
+    return {
+      url: `${base}/api/v2/tx/${id}`,
+      conv: r => {
+        const t = r as BbTx;
+        if (t?.txid !== id) throw new Error(`${base}: transaction not known`);
+        return bbTx(t);
+      },
+    };
+  }
   if (path === '/v1/fees/recommended')
     return {
       url: `${base}/api/v2/estimatefee/2`, // within two blocks: Bitcoin Core's shortest estimate
@@ -440,6 +451,29 @@ export async function txStatus(apis: string[], txid: string, f: Fetcher = defaul
  * A receipt cannot be taken back, so it waits until no source sees the payment less deep (or not at all
  * confirmed). `disagree` when sources place it in different blocks: a fork that has not settled yet.
  */
+/**
+ * Check a round's coins against the blockchain before signing (review M-F4). The amounts in a PSBT are written by
+ * whoever publishes the round, and the signing device trusts them for the fee it shows: a round that understates a
+ * coin can hide a large fee. Each coin's previous transaction is read from a chain source; any coin whose amount or
+ * address differs is returned as a problem. Empty: every coin matches.
+ */
+export async function coinProblems(apis: string[], inputs: { txid: string; vout: number; value: number; address: string }[], f: Fetcher = defaultFetch): Promise<string[]> {
+  const problems: string[] = [];
+  const txs = new Map<string, EsploraTx>();
+  for (const id of [...new Set(inputs.map(i => i.txid))]) {
+    const tx = await get<EsploraTx>(apis, `/tx/${id}`, f);
+    if (tx?.txid !== id) throw new Error(`/tx/${id.slice(0, 8)}…: not the transaction asked for`);
+    txs.set(id, tx);
+  }
+  inputs.forEach((inp, i) => {
+    const out = txs.get(inp.txid)?.vout[inp.vout];
+    if (!out) problems.push(`coin ${i + 1}: not found on the blockchain`);
+    else if (out.value !== inp.value) problems.push(`coin ${i + 1}: the round says ${inp.value} sats, the blockchain ${out.value}`);
+    else if (out.scriptpubkey_address !== inp.address) problems.push(`coin ${i + 1}: not at the address the round says`);
+  });
+  return problems;
+}
+
 export async function txDepth(apis: string[], txid: string, f: Fetcher = defaultFetch): Promise<(TxStatus & { disagree: boolean; sources: number }) | undefined> {
   const all = (await Promise.all(apis.map(a => txStatus([a], txid, f)))).filter((x): x is TxStatus => !!x);
   if (!all.length) return undefined;

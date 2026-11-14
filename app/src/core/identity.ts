@@ -90,7 +90,8 @@ export function parseFounderCode(text: string): FounderCode | undefined {
     if (o?.t !== 'btcdao-founder' || o.v !== 1) return undefined;
     if (typeof o.name !== 'string' || !o.name.trim() || o.name.length > 40) return undefined;
     if (!/^[0-9a-f]{64}$/.test(o.key)) return undefined;
-    if (o.council && !(/^[0-9a-f]{8}$/.test(o.council.fingerprint) && typeof o.council.xpub === 'string')) return undefined;
+    // A council key is an extended public key (xpub/tpub), never a private one (review I-2).
+    if (o.council && !(/^[0-9a-f]{8}$/.test(o.council.fingerprint) && typeof o.council.xpub === 'string' && /^[xt]pub[1-9A-HJ-NP-Za-km-z]{100,115}$/.test(o.council.xpub))) return undefined;
     if (o.council?.device !== undefined && o.council.device !== 'seedsigner') return undefined;
     return o as FounderCode;
   } catch {

@@ -187,6 +187,8 @@ export function inspectRound(psbtB64: string, d: ParsedDescriptor, network: Netw
   for (let i = 0; i < tx.inputsLength; i++) {
     const inp = tx.getInput(i);
     if (!inp.witnessUtxo || !inp.txid) { errors.push(`input ${i}: no witness_utxo`); continue; }
+    // A round is published unsigned: a signature or final witness already in it could block or mislead signing (review M-F6).
+    if (inp.partialSig?.length || inp.finalScriptWitness?.length || inp.finalScriptSig?.length) errors.push(`input ${i}: already carries a signature`);
     const address = Address(net).encode(OutScript.decode(inp.witnessUtxo.script as Uint8Array));
     const where = find(address);
     if (!where) errors.push(`input ${i}: not a treasury address`);
@@ -236,6 +238,7 @@ export function memberSignatures(psbtB64: string, d: ParsedDescriptor, network: 
     const sig = inp.partialSig?.find(([pk]) => bytesToHex(pk as Uint8Array) === bytesToHex(mine))?.[1] as Uint8Array | undefined;
     if (!sig || sig[sig.length - 1] !== 0x01) continue; // SIGHASH_ALL only
     const a = treasuryAddress(d, network, r.branch, r.index!);
+    if (!a.witnessScript.includes(bytesToHex(mine))) continue; // a key that cannot sign this input (review M-F8)
     const hash = tx.preimageWitnessV0(i, hexToBytes(a.witnessScript), 0x01, BigInt(r.value));
     try {
       if (secp256k1.verify(sig.slice(0, -1), hash, mine, { format: 'der', lowS: true } as never)) out.set(i, bytesToHex(mine));
@@ -253,12 +256,37 @@ export function signWithMnemonicKey(psbtB64: string, master: HDKey): string {
   return base64.encode(tx.toPSBT(0));
 }
 
-/** Combine signed PSBTs, finalise, and return the raw transaction hex and its id. */
-export function finalizeRound(psbts: string[]): { hex: string; txid: string } {
-  const [first, ...rest] = psbts.map(p => Transaction.fromPSBT(base64.decode(p)));
-  for (const t of rest) first.combine(t);
-  first.finalize();
-  return { hex: bytesToHex(first.extract()), txid: first.id };
+/**
+ * The broadcastable transaction: the round's own (unsigned) PSBT plus, from the signed copies, only signatures that
+ * verify for a key in that input's script, one per key. A junk or conflicting signature in someone's signed copy is
+ * left out instead of stopping the round (review M-F6).
+ */
+export function finalizeRound(roundPsbt: string, signedPsbts: string[]): { hex: string; txid: string } {
+  const tx = Transaction.fromPSBT(base64.decode(roundPsbt));
+  const id = txidOf(tx);
+  const signed = signedPsbts.map(p => { try { return Transaction.fromPSBT(base64.decode(p)); } catch { return undefined; } }).filter(t => !!t && txidOf(t) === id) as Transaction[];
+  for (let i = 0; i < tx.inputsLength; i++) {
+    const inp = tx.getInput(i);
+    const script = inp.witnessScript as Uint8Array | undefined;
+    if (!script || !inp.witnessUtxo) throw new Error(`input ${i}: no witness_script`);
+    const scriptHex = bytesToHex(script);
+    const hash = tx.preimageWitnessV0(i, script, 0x01, inp.witnessUtxo.amount as bigint);
+    const keep = new Map<string, [Uint8Array, Uint8Array]>();
+    for (const t of signed) {
+      for (const [pk, sig] of (t.getInput(i).partialSig ?? []) as [Uint8Array, Uint8Array][]) {
+        const k = bytesToHex(pk);
+        if (keep.has(k) || !scriptHex.includes(k) || sig[sig.length - 1] !== 0x01) continue;
+        try {
+          if (secp256k1.verify(sig.slice(0, -1), hash, pk, { format: 'der', lowS: true } as never)) keep.set(k, [pk, sig]);
+        } catch {
+          /* invalid encoding */
+        }
+      }
+    }
+    if (keep.size) tx.updateInput(i, { partialSig: [...keep.values()] }, true);
+  }
+  tx.finalize();
+  return { hex: bytesToHex(tx.extract()), txid: tx.id };
 }
 
 export const masterFromSeed = (seed: Uint8Array, network: Network) => HDKey.fromMasterSeed(seed, VERSIONS[network]);

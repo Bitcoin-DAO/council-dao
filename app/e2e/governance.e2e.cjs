@@ -196,7 +196,10 @@ async function councilAction(page, buttonName) {
   check(!(await n.getByText('Sì', { exact: true }).isVisible()), 'candidate cannot vote');
 
   log('Waiting for the close (~2 min), then council phones count automatically');
+  // A proposal page left open: at the close its vote buttons go, without a reload or a refresh (review U-7).
+  await open(f2, `#/p/${payoutId}`);
   await new Promise(r => setTimeout(r, 150000));
+  check(!(await f2.getByRole('button', { name: 'Astenuto', exact: true }).isVisible()), 'at the close the vote buttons go, without a reload');
   await open(a, '#/proposals');
   await a.getByRole('button', { name: 'Chiuse' }).click();
   await a.waitForTimeout(3000);

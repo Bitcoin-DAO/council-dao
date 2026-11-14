@@ -318,6 +318,10 @@ async function verifyEventSignature(event: NostrEvent): Promise<boolean> {
       new TextEncoder().encode(serializedEventData)
     );
     const messageHash = new Uint8Array(messageHashBuffer);
+    // btc-dao: the id must be the hash of the content (review X-2). Otherwise one signed event could be stored under
+    // made-up ids, or a real event's id taken first by a junk one so the real one is refused as a duplicate.
+    const idOfContent = Array.from(messageHash, b => b.toString(16).padStart(2, '0')).join('');
+    if (idOfContent !== event.id) return false;
     const publicKeyBytes = hexToBytes(event.pubkey);
     return schnorr.verify(signatureBytes, messageHash, publicKeyBytes);
   } catch (error) {
@@ -1646,9 +1650,10 @@ async function queryEvents(filters: NostrFilter[], bookmark: string, env: Env): 
           const countResult = await session.prepare(countQuery.sql).bind(...countQuery.params).first() as { count: number } | null;
           const estimatedRows = (countResult?.count as number) || 0;
 
+          // btc-dao: never skip a filter (review X-1): skipping a DAO's #D query once its record passed 10,000
+          // events would hide the whole record. The limit (at most 500 per query, paged by the app) bounds the work.
           if (estimatedRows > 10000) {
-            console.warn(`Query precheck: estimated ${estimatedRows} rows, skipping filter to prevent timeout`);
-            continue;
+            console.warn(`Query precheck: estimated ${estimatedRows} rows, proceeding with the limit`);
           } else {
             console.log(`Query precheck: estimated ${estimatedRows} rows, proceeding`);
           }

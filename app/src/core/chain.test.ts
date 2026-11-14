@@ -224,3 +224,28 @@ describe('depth of a payment, source by source (SEEDSIGNER DAO, 10 Nov 2026)', (
     expect(await txDepth([A, B], 'ab'.repeat(32), oneUnconfirmed)).toMatchObject({ confirmed: false, disagree: true });
   });
 });
+
+// Review of 14 November 2026, block 4: a round's coins are checked against the blockchain before signing.
+import { coinProblems } from './chain';
+describe('coins checked against the blockchain (review M-F4)', () => {
+  const T = 'cd'.repeat(32);
+  const chainTx = { txid: T, fee: 100, status: { confirmed: true }, vin: [], vout: [{ scriptpubkey_address: 'tb1qtreasury0', value: 300_000 }, { scriptpubkey_address: 'tb1qtreasury1', value: 50_000 }] };
+  const esplora: Fetcher = async url => {
+    if (url.endsWith(`/tx/${T}`)) return chainTx;
+    throw new Error('404');
+  };
+  it('matching coins: no problems', async () => {
+    expect(await coinProblems(['https://x/api'], [{ txid: T, vout: 0, value: 300_000, address: 'tb1qtreasury0' }, { txid: T, vout: 1, value: 50_000, address: 'tb1qtreasury1' }], esplora)).toEqual([]);
+  });
+  it('a coin claimed smaller than it is (the hidden-fee trick) is a problem', async () => {
+    const p = await coinProblems(['https://x/api'], [{ txid: T, vout: 0, value: 1, address: 'tb1qtreasury0' }], esplora);
+    expect(p).toEqual(['coin 1: the round says 1 sats, the blockchain 300000']);
+  });
+  it('a coin at another address, or not on the chain, is a problem', async () => {
+    expect((await coinProblems(['https://x/api'], [{ txid: T, vout: 1, value: 50_000, address: 'tb1qelsewhere' }], esplora))[0]).toContain('not at the address');
+    expect((await coinProblems(['https://x/api'], [{ txid: T, vout: 5, value: 1, address: 'tb1qtreasury0' }], esplora))[0]).toContain('not found');
+  });
+  it('a source that cannot answer is an error, not a pass', async () => {
+    await expect(coinProblems(['https://x/api'], [{ txid: 'ef'.repeat(32), vout: 0, value: 1, address: 'a' }], esplora)).rejects.toThrow();
+  });
+});

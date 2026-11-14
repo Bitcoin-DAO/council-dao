@@ -6,7 +6,7 @@ import { fmtDate, fmtSats, t } from '../i18n';
 import { KIND } from '../core/events';
 import { REPORT_MAX, type Tranche } from '../core/delivery';
 import { validAddress, type Output, type ProposalView } from '../core/state';
-import { errText } from './parts';
+import { errText, safeHref } from './parts';
 import { useNameOf } from './Proposals';
 
 export function Delivery({ p }: { p: ProposalView }) {
@@ -85,7 +85,7 @@ export function Delivery({ p }: { p: ProposalView }) {
         <div id={`report-${r.event.id}`} class="card tint" style="gap:4px">
           <span class="small">{t('dl.reportHead', { n: r.tranche, name: nameOf(r.event.pubkey), date: fmtDate(r.event.created_at) })}</span>
           <p style="white-space:pre-wrap;margin:0">{r.text}</p>
-          {r.link && <a href={r.link} target="_blank" rel="noopener noreferrer">{t('pd.link')} ↗</a>}
+          {safeHref(r.link) && <a href={safeHref(r.link)} target="_blank" rel="noopener noreferrer">{t('pd.link')} ↗</a>}
         </div>
       ))}
 
@@ -110,7 +110,7 @@ export function Delivery({ p }: { p: ProposalView }) {
             <textarea maxLength={REPORT_MAX} value={text} style="font-family:inherit;font-size:16px" onInput={e => setText((e.target as HTMLTextAreaElement).value)} />
           </label>
           <label class="field">{t('np.link')}<input type="text" inputMode="url" placeholder="https://" value={link} onInput={e => setLink((e.target as HTMLInputElement).value)} /></label>
-          <button type="button" class="btn primary" disabled={busy || !text.trim()} onClick={report}>{t('dl.publish')}</button>
+          <button type="button" class="btn primary" disabled={busy || !text.trim() || (!!link.trim() && !safeHref(link.trim()))} onClick={report}>{t('dl.publish')}</button>
           {schedule && <p class="small">{t('dl.reportNote')}</p>}
         </div>
       )}

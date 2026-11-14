@@ -122,6 +122,23 @@ export const DISCUSSION_RATE_LIMIT = { rate: 10 / 60000, capacity: 20 }; // 10 a
 // against a broken or dishonest app stretching a vote by dating its proposal in the future.
 export const MAX_FUTURE_SECONDS = 10 * 60;
 
+// btc-dao (review 14 Nov 2026, X-2/X-3/X-5): sizes and counts a DAO's events and queries never need more than.
+// The protocol caps proposal and report text at 2,000 characters; a PSBT in a round is the largest content.
+export const EVENT_LIMITS = {
+  maxMessageBytes: 256 * 1024, // a whole client message
+  maxContentLength: 128 * 1024, // event content (a round's PSBT with many coins stays well under)
+  maxTags: 50,
+  maxTagValueLength: 1024,
+};
+export const REQ_LIMITS = {
+  maxSubscriptions: 20, // per connection
+  maxFilters: 10, // per REQ
+  maxFilterValues: 500, // entries in any filter array (ids, authors, kinds, tag values)
+  maxLimit: 500,
+};
+// Events per minute from one network address, across its connections to this relay region.
+export const IP_EVENT_RATE_LIMIT = { rate: 60 / 60000, capacity: 120 };
+
 // btc-dao: every event must carry ["D", <dao_id>]. Leave the list empty until
 // a genesis exists (any 64-hex D tag is then accepted); after each founding,
 // add that DAO's id and redeploy. One relay can serve a DAO's practice and

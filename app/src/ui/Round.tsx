@@ -1,10 +1,11 @@
 // Payout rounds (protocol 6.1-6.3): prepare (council), check and sign, broadcast, receipt.
+import { safeTimeZone } from '../core/util';
 import { useEffect, useState } from 'preact/hooks';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { broadcastRound, chainApis, receiptDepth, refreshTreasury, signAndPublish, signingKey, useApp } from '../app';
 import { fmtSats, t } from '../i18n';
 import { KIND } from '../core/events';
-import { explorerFor, feePolicyOf, pushPageOf, sourceLabel, suggestFee, txDepth, txSeenBy, txStatus, type Broadcast, type TxStatus } from '../core/chain';
+import { explorerFor, feePolicyOf, pushPageOf, sourceLabel, suggestFee, txDepth, txSeenBy, txStatus, type Broadcast, type TxStatus, coinProblems } from '../core/chain';
 import { parseDescriptor, treasuryAddress } from '../core/descriptor';
 import type { Network } from '../core/config';
 import { mergeSignatures } from '../core/hwkeys';
@@ -15,6 +16,7 @@ import { SeedSignerSign } from './Hw';
 import { buildRound, estimateVsize, finalizeRound, masterFromSeed, memberSignatures, RECEIVE_WINDOW, signWithMnemonicKey, type BuiltRound } from '../core/round';
 import { cadenceOf, roundLabel } from '../core/time';
 import { proposalLabel, type Output, type ProposalView, type RoundView } from '../core/state';
+export { nextRoundOutputs } from '../core/next';
 import { CouncilOnly, Address, Footer, Header, errText, go, askText } from './parts';
 import { useNameOf } from './Proposals';
 
@@ -135,7 +137,7 @@ export function PrepareRound() {
     setBusy(true);
     try {
       const { event } = await signAndPublish(KIND.round, {
-        round: roundLabel(s.now, settings.rules.timezone, cadenceOf(settings.rules.payoutRound)), proposals: list.map(p => p.event.id), ...(Object.keys(tranchesOf).length ? { tranches: tranchesOf } : {}), psbt: built.psbt, fee_rate_sat_vb: r, fee_sat: built.fee,
+        round: roundLabel(s.now, safeTimeZone(settings.rules.timezone), cadenceOf(settings.rules.payoutRound)), proposals: list.map(p => p.event.id), ...(Object.keys(tranchesOf).length ? { tranches: tranchesOf } : {}), psbt: built.psbt, fee_rate_sat_vb: r, fee_sat: built.fee,
       });
       const tk = signingKey();
       if (tk) await signAndPublish(KIND.sign, { psbt: signWithMnemonicKey(built.psbt, masterFromSeed(mnemonicToSeedSync(tk.mnemonic), cfg.network)) }, [['e', event.id]]);
@@ -262,6 +264,17 @@ export function RoundDetail({ id }: { id: string }) {
   const [checked, setChecked] = useState(false); // asked the sources since the last broadcast
   const r = s.rounds.find(x => x.event.id === id);
   const apis = chainApis();
+  // Before anyone signs: the round's coins, checked against the blockchain (review M-F4).
+  const [coins, setCoins] = useState<{ round: string; problems?: string[]; error?: string }>();
+  const checkCoins = () => {
+    if (!r?.inspection) return;
+    const round = r.event.id;
+    setCoins(undefined);
+    coinProblems(chainApis(), r.inspection.inputs).then(problems => setCoins({ round, problems }), e => setCoins({ round, error: errText(e) }));
+  };
+  useEffect(() => {
+    if (r?.inspection && r.status === 'open' && !r.ready) checkCoins();
+  }, [r?.event.id, r?.status, r?.ready]);
 
   // Ask the sources whether they know the transaction; until the receipt, ask again every 20 seconds.
   useEffect(() => {
@@ -332,7 +345,7 @@ export function RoundDetail({ id }: { id: string }) {
   let rawHex: string | undefined;
   if (r.ready) {
     try {
-      rawHex = finalizeRound(r.signEvents.map(x => JSON.parse(x.content).psbt)).hex;
+      rawHex = finalizeRound(r.content.psbt, r.signEvents.map(x => JSON.parse(x.content).psbt)).hex;
     } catch { /* shown as the round's errors */ }
   }
   const doBroadcast = () => run(async () => {
@@ -419,7 +432,17 @@ export function RoundDetail({ id }: { id: string }) {
           )}
           {r.status === 'open' && !r.replacedBy && r.ready && myEntry && !iSigned && <p class="small">{t('rd.notNeeded')}</p>}
           {r.status === 'open' && !r.replacedBy && !(r.ready && !iSigned) && app.isCouncil && app.secret && myEntry && !(kept && !iSigned) && (
-            iSigned ? <p class="ok">{t('rd.signed')}</p> : (
+            iSigned ? <p class="ok">{t('rd.signed')}</p>
+            : !(coins?.round === r.event.id && coins.problems?.length === 0) ? (
+              coins?.round === r.event.id && coins.problems?.length ? (
+                <div class="warnbox">
+                  <strong>{t('rd.coinsWrong')}</strong>
+                  <ul>{coins.problems.map(x => <li class="small">{x}</li>)}</ul>
+                </div>
+              ) : coins?.round === r.event.id && coins.error ? (
+                <p class="small">{t('rd.coinsUnchecked', { msg: coins.error })} <button type="button" class="btn link" onClick={checkCoins}>{t('retry')}</button></p>
+              ) : <p class="small">{t('rd.coinsChecking')}</p>
+            ) : (
               <>
                 {tk && !app.identity?.wordsChecked ? <p class="warn">{t('words.needed')} <a href="#/profile">{t('words.toProfile')}</a></p>
                   : tk ? <button type="button" class="btn primary" disabled={busy} onClick={signTest}>{t('rd.signTest')}</button>
@@ -533,15 +556,22 @@ export function PaymentLine({ id }: { id: string }) {
   const pay = s.payments.get(id);
   if (!pay) return null;
   const date = pay.lapseAt ? new Intl.DateTimeFormat(app.lang === 'en' ? 'en-GB' : 'it-IT', { day: 'numeric', month: 'long' }).format(new Date(pay.lapseAt * 1000)) : '';
-  const round = pay.round?.content.round ?? '';
-  const isClose = s.proposals.find(p => p.event.id === id)?.content.type === 'close';
+  // The round to name and link: the one in hand, else the round that paid it (for a payout in tranches, the one
+  // that paid its last tranche; review U-5: a fully paid one said "Paid in round" with no round).
+  const lastTranche = pay.tranches?.filter(v => v.paidRound).slice(-1)[0]?.paidRound;
+  const shown = pay.round ?? (lastTranche ? s.rounds.find(r => r.event.id === lastTranche) : undefined)
+    ?? (pay.status === 'paid' ? s.rounds.find(r => r.status === 'paid' && r.content.proposals.includes(id)) : undefined);
+  const round = shown?.content.round ?? '';
+  const type = s.proposals.find(p => p.event.id === id)?.content.type;
+  const isClose = type === 'close';
   // A payout in tranches that lapsed part-way: say what was paid before the rest lapsed.
   const paidPart = pay.status === 'lapsed' ? (pay.tranches ?? []).filter(v => v.status === 'paid') : [];
   const lapsedAt = pay.tranches?.find(v => v.status === 'lapsed');
   const text = pay.status === 'paid' && isClose ? t('pay.closeDone')
+    : pay.status === 'paid' && type === 'change_council' ? t('pay.councilMoved', { round })
     : paidPart.length && lapsedAt ? t('pay.lapsedPart', { paid: paidPart.length, total: pay.tranches!.length, sats: fmtSats(paidPart.reduce((a, v) => a + v.amount_sat, 0)), n: lapsedAt.n, date })
     : t(`pay.${pay.status}` as 'pay.waiting', { date, round });
-  return pay.round ? <a class={pay.status === 'paid' ? 'ok' : 'small'} href={`#/round/${pay.round.event.id}`}>{text}</a> : <p class={pay.status === 'lapsed' ? 'warn' : 'small'}>{text}</p>;
+  return shown ? <a class={pay.status === 'paid' ? 'ok' : 'small'} href={`#/round/${shown.event.id}`}>{text}</a> : <p class={pay.status === 'lapsed' ? 'warn' : 'small'}>{text}</p>;
 }
 
 /** The round in hand: open, and not replaced by a later round on its coins. */
@@ -608,7 +638,7 @@ export function SweepRound() {
     setMsg(undefined);
     try {
       const { event } = await signAndPublish(KIND.round, {
-        round: roundLabel(s.now, settings.rules.timezone, cadenceOf(settings.rules.payoutRound)), proposals: [], sweep: descriptor, psbt: built.psbt, fee_rate_sat_vb: r, fee_sat: built.fee,
+        round: roundLabel(s.now, safeTimeZone(settings.rules.timezone), cadenceOf(settings.rules.payoutRound)), proposals: [], sweep: descriptor, psbt: built.psbt, fee_rate_sat_vb: r, fee_sat: built.fee,
       });
       go(`/round/${event.id}`);
     } catch (e) {

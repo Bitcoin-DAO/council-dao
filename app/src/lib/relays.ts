@@ -53,3 +53,28 @@ export async function publish(relays: string[], event: Event): Promise<PublishRe
   });
   return out;
 }
+
+/** The most a relay returns for one request (the DAO relay's cap; public relays use the same or less). */
+export const PAGE = 500;
+
+/**
+ * Every event matching the filter, from each relay, paging back in time while a relay returns full pages
+ * (review X-1/R-H6: a relay returns at most PAGE events, newest first, so one request lost the oldest part of a
+ * large record, the genesis first). Each relay is paged on its own: their pages end at different times.
+ */
+export async function queryAll(relays: string[], filter: Filter, maxPages = 200, q: (relays: string[], f: Filter) => Promise<Event[]> = query): Promise<Event[]> {
+  const got = new Map<string, Event>();
+  await Promise.all(relays.map(async relay => {
+    let until: number | undefined;
+    for (let page = 0; page < maxPages; page++) {
+      const batch = await q([relay], { ...filter, limit: PAGE, ...(until !== undefined ? { until } : {}) });
+      let fresh = 0;
+      for (const e of batch) if (!got.has(e.id)) { got.set(e.id, e); fresh++; }
+      if (batch.length < PAGE) return;
+      const oldest = Math.min(...batch.map(e => e.created_at));
+      // Events sharing the boundary second may span two pages: ask from that second again, unless nothing new came.
+      until = fresh === 0 || until === oldest ? oldest - 1 : oldest;
+    }
+  }));
+  return [...got.values()];
+}

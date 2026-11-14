@@ -129,8 +129,9 @@ describe('a trimmed signed PSBT, as a SeedSigner returns it', () => {
     const back = base64.encode(trimmed.toPSBT(0));
     expect(inspectRound(back, d, 'testnet4').errors.length).toBeGreaterThan(0); // unusable as it comes back
     const merged = mergeSignatures(sent, back);
-    const ins = inspectRound(merged, d, 'testnet4');
+    const ins = inspectRound(sent, d, 'testnet4'); // the round as published, unsigned
     expect(ins.errors).toEqual([]);
+    expect(inspectRound(merged, d, 'testnet4').errors.join()).toContain('already carries a signature'); // a round is never published signed
     expect(memberSignatures(merged, d, 'testnet4', keys[1], ins).size).toBe(1);
     expect(memberSignatures(merged, d, 'testnet4', keys[0], ins).size).toBe(0);
     expect(() => mergeSignatures(mk(90_000), back)).toThrow(/not the one sent/);

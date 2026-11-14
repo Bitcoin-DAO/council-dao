@@ -67,6 +67,8 @@ export function parseKeyOrigin(s: string, network: Network): TreasuryKey {
 
 export function checkXpub(xpub: string, network: Network): HDKey {
   const key = HDKey.fromExtendedKey(xpub, VERSIONS[network]);
+  // A private key (xprv/tprv) is never a council key: it would be published with the treasury (review I-2).
+  if (key.privateKey || !/^[xt]pub/.test(xpub)) throw new Error('xpub-private');
   if (key.depth !== 4) throw new Error('xpub-depth');
   return key;
 }

@@ -15,10 +15,14 @@ export const go = (path: string) => {
   window.scrollTo(0, 0);
 };
 
+/** A link from the record, only if it is an ordinary web address (review I-5): never javascript: or the like. */
+export const safeHref = (url: unknown): string | undefined => (typeof url === 'string' && /^https?:\/\/[^\s]+$/i.test(url) ? url : undefined);
+
 export function errText(e: unknown): string {
   const msg = String((e as Error)?.message ?? e);
   if ((e as Error)?.name === 'NotAllowedError' || msg === 'passkey-cancelled') return t('error.cancelled');
   if (msg === 'hw-net-mainnet' || msg === 'hw-net-testnet' || msg === 'hw-path') return t(`error.${msg}` as 'error.hw-path');
+  if (msg === 'xpub-private') return t('error.xpubPrivate');
   if (msg === 'not-signed-in') return t('error.notSignedIn');
   if (msg === 'not-signed-in-kept') return t('error.notSignedInKept');
   return t('error.generic', { msg });

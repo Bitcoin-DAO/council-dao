@@ -114,9 +114,9 @@ export function mergeSignatures(sentB64: string, returnedB64: string): string {
   for (let i = 0; i < back.inputsLength; i++) {
     const sigs = back.getInput(i).partialSig;
     if (!sigs?.length) continue;
-    const have = sent.getInput(i).partialSig ?? [];
-    const merged = [...have];
-    for (const [pk, sig] of sigs) if (!merged.some(([k]) => bytesToHex(k) === bytesToHex(pk))) merged.push([pk, sig]);
+    // The device's signature wins over anything already in the copy sent (review M-F6).
+    const fromDevice = new Set(sigs.map(([pk]) => bytesToHex(pk)));
+    const merged = [...(sent.getInput(i).partialSig ?? []).filter(([k]) => !fromDevice.has(bytesToHex(k))), ...sigs];
     sent.updateInput(i, { partialSig: merged }, true);
   }
   return base64.encode(sent.toPSBT(0));

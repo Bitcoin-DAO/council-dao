@@ -191,6 +191,16 @@ describe('broadcasting', () => {
     expect(((await r.json()) as { error: string }).error).toMatch(/no source accepted it: bb\.example: 400 · es1\.example: min relay fee not met · es2\.example: min relay fee not met/);
   });
 
+  it('does not count "unknown error" or an error page as "already known" (review X-6)', async () => {
+    for (const body of ['{"error":"unknown error"}', '{"error":"Unknown transaction format"}', '<!DOCTYPE html><title>520: Web server is returning an unknown error</title>']) {
+      route = async () => new Response(body, { status: 400 });
+      const r = await post('/bb/api/v2/sendtx/', HEX);
+      expect(r.status).not.toBe(200);
+    }
+    route = async () => new Response('{"error":"txn-already-in-mempool"}', { status: 400 });
+    expect((await post('/bb/api/v2/sendtx/', HEX)).status).toBe(200);
+  });
+
   it('counts "already known" as accepted, and answers in Esplora format on the Esplora path', async () => {
     route = async () => new Response('sendrawtransaction RPC error: {"code":-27,"message":"Transaction already in block chain"}', { status: 400 });
     const r = await post('/esplora/api/tx', HEX);

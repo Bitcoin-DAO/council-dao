@@ -10,7 +10,7 @@ import type { RoundView } from './core/state';
 import { prfSalt, pubkeyOf, treasuryKeyFromMnemonic, unwrapSecret, wrapSecret } from './core/identity';
 import { nowSec, offsetFromDate, parseJson, setClockOffset } from './core/util';
 import { t } from './i18n';
-import { query, publish, type PublishResult } from './lib/relays';
+import { query, queryAll, publish, type PublishResult } from './lib/relays';
 import { createPasskey, credTagOf, getPrf } from './lib/passkey';
 import { prefs, session, store, type LocalIdentity, type PendingFounder, treasuryCache } from './lib/store';
 
@@ -68,8 +68,8 @@ export const relaysOf = (site: SiteConfig) => usable(site.relays);
 
 async function fetchEvents(site: SiteConfig): Promise<Event[]> {
   const relays = relaysOf(site);
-  if (site.daoId) return query(relays, { '#D': [site.daoId], limit: 5000 });
-  const gens = await query(relays, { kinds: [KIND.genesis], limit: 500 });
+  if (site.daoId) return queryAll(relays, { '#D': [site.daoId] });
+  const gens = await queryAll(relays, { kinds: [KIND.genesis] }, 4);
   const ids = [
     ...new Set(
       gens
@@ -79,7 +79,7 @@ async function fetchEvents(site: SiteConfig): Promise<Event[]> {
     ),
   ];
   if (!ids.length) return gens;
-  const rest = await query(relays, { '#D': ids, limit: 5000 });
+  const rest = await queryAll(relays, { '#D': ids });
   return [...gens, ...rest];
 }
 
@@ -126,7 +126,7 @@ export async function broadcastRound(r: RoundView): Promise<Broadcast> {
   return sent;
 }
 
-const roundHex = (r: RoundView) => finalizeRound(r.signEvents.map(e => parseJson<{ psbt: string }>(e.content)!.psbt)).hex;
+const roundHex = (r: RoundView) => finalizeRound(r.content.psbt, r.signEvents.map(e => parseJson<{ psbt: string }>(e.content)!.psbt)).hex;
 
 /** A minute after a broadcast, the sources that do not know the transaction yet get it once more. */
 export const FOLLOW_UP_MS = 60_000;
@@ -439,15 +439,24 @@ export async function signIn(): Promise<'ok' | 'no-prf' | 'not-found'> {
   if (!site || !daoId) throw new Error('not-founded');
   const a = await getPrf({ passkeyDomain: site.passkeyDomain, salt: prfSalt(daoId) });
   if (!a.prf) return 'no-prf';
-  let kw = state.dao?.keywraps.get(a.credTag);
-  if (!kw) {
+  let kws = state.dao?.keywraps.get(a.credTag);
+  if (!kws?.length) {
     const evs = await query(relaysOf(site), { kinds: [KIND.keywrap], '#D': [daoId], '#c': [a.credTag] });
     derive([...state.events, ...evs]);
-    kw = state.dao?.keywraps.get(a.credTag);
+    kws = state.dao?.keywraps.get(a.credTag);
   }
-  if (!kw) return 'not-found';
-  const secret = unwrapSecret(a.prf, kw);
-  if (pubkeyOf(secret) !== kw.pubkey) return 'not-found';
+  // Newest first; the first that opens with this passkey to the key that signed it is this member's (review I-3).
+  let found: { kw: NonNullable<typeof kws>[number]; secret: string } | undefined;
+  for (const kw of kws ?? []) {
+    try {
+      const secret = unwrapSecret(a.prf, kw);
+      if (pubkeyOf(secret) === kw.pubkey) { found = { kw, secret }; break; }
+    } catch {
+      // not opened by this passkey: someone else's, or junk
+    }
+  }
+  if (!found) return 'not-found';
+  const { kw, secret } = found;
   const existing = await store.getIdentity(daoId);
   const identity: LocalIdentity = { ...existing, daoId, pubkey: kw.pubkey, credId: a.credId, wrapped: { nonce: kw.nonce, ct: kw.ct } };
   await store.setIdentity(identity);

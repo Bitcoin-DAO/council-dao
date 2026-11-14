@@ -110,6 +110,10 @@ http.createServer((req, res) => {
     const t = txs.get(m[1]);
     return t ? send(200, t.confirmed ? { confirmed: true, block_height: t.height, block_time: t.time } : { confirmed: false }) : send(404, 'Transaction not found', 'text/plain');
   }
+  if ((m = url.match(/^\/api\/tx\/([0-9a-f]{64})$/))) {
+    const t = txs.get(m[1]);
+    return t ? send(200, esploraTx(m[1], t)) : send(404, 'Transaction not found', 'text/plain');
+  }
   if ((m = url.match(/^\/api\/address\/([a-z0-9]+)\/utxo$/))) {
     const out = [];
     for (const [k, u] of utxos) if (u.address === m[1]) {

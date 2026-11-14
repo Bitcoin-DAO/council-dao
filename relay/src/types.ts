@@ -77,6 +77,8 @@ export interface WebSocketSession {
   authenticatedPubkeys: Set<string>;
   // Pay-to-relay: cached per-session, checked at AUTH time
   hasPaid?: boolean;
+  /** btc-dao: the client's network address (CF-Connecting-IP), for the per-address event limit. */
+  ip?: string;
 }
 
 export class RateLimiter {

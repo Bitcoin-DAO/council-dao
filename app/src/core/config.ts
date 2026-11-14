@@ -47,6 +47,39 @@ export interface Rules {
   [k: string]: unknown;
 }
 
+/**
+ * The rules a change_rules proposal may set, each with its check (review R-H2): a passed change with a value the
+ * app cannot use would break every client, and a name like "constructor" is not a rule at all.
+ */
+const isInt = (v: unknown, min: number, max: number) => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
+const isNum = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v > min && v <= max;
+const isTypeList = (v: unknown) => Array.isArray(v) && v.length <= 20 && v.every(x => typeof x === 'string' && /^[A-Za-z]{1,32}$/.test(x));
+const RULE_CHECKS: Record<string, (v: unknown, valid: { timeZone: (tz: unknown) => boolean }) => boolean> = {
+  votingPeriodDays: v => isNum(v, 0, 365),
+  quorum: v => typeof v === 'string' && /^\s*\d{1,3}\s*\/\s*[1-9]\d{0,2}\s*$/.test(v) && (() => { const [a, b] = v.split('/').map(Number); return a <= b; })(),
+  simpleMajority: isTypeList,
+  twoThirdsMajority: isTypeList,
+  payoutRound: v => v === 'monthly' || v === 'weekly',
+  timezone: (v, valid) => valid.timeZone(v),
+  lapseAfterRounds: v => isInt(v, 1, 52),
+  maxFeeRateSatVb: v => isNum(v, 0, 10_000),
+  feePolicy: v => v === 'fast' || v === 'economical',
+  treasuryCapSats: v => isInt(v, 0, 21e14),
+  remoteVerification: v => !!v && typeof v === 'object' && !Array.isArray(v) && JSON.stringify(v).length <= 1000,
+  minimumAge: v => isInt(v, 0, 120),
+  fundingModel: v => v === 'grant' || v === 'production' || v === 'mutual' || v === 'revolving',
+  charterLanguage: v => typeof v === 'string' && /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(v),
+  charterSha256: v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v),
+  maxTranches: v => isInt(v, 1, 10),
+  maxScheduleDays: v => isInt(v, 1, 3650),
+};
+export const RULE_NAMES = Object.keys(RULE_CHECKS);
+/** Why a rule change cannot be applied, or undefined when the name is a known rule and the value is usable. */
+export function ruleValueError(name: string, value: unknown, valid: { timeZone: (tz: unknown) => boolean }): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(RULE_CHECKS, name)) return `unknown rule ${name.slice(0, 32)}`;
+  return RULE_CHECKS[name](value, valid) ? undefined : `bad value for ${name}`;
+}
+
 export interface DaoConfig {
   configVersion: number;
   stage?: Stage;

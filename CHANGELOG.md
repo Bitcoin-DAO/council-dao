@@ -2,6 +2,46 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.9.0 · 14 November 2026
+
+The phase A fixes from the [14 November code review](docs/reviews/2026-11-14-code-review.md), made before the ALPHA DAO workshop. Five reviewers read the money path, the vote rules, identity and keys, the relay and gateway, and the screens; every critical and high finding marked phase A is fixed.
+
+**The record can't break the app**
+- An event with wrong types or impossible numbers is set aside on its own; it can no longer blank the app for every member. Rule changes with values the app can't use (an unknown time zone, an unknown rule) are refused.
+- Roster and settings histories are no longer cut off after 50 versions.
+
+**Counts must check out** (protocol 4.4, 5.3)
+- A count is valid only if the app holds every vote it lists and recounting them gives the same result. A made-up count changes nothing.
+- Decided means decided: once a result has been acted on (paid, or a council or rules change adopted), later counts are ignored.
+- Only valid counts settle older proposals.
+- A leave dated before a count that still counted the person is refused.
+
+**Rounds** (money)
+- A payout listed twice in one round, or paid by two rounds, is paid once: rounds paying the same thing must spend the same coin.
+- A replacement round must share a coin with every open round. Rounds are judged in the order their payments were recorded, whatever date they carry, and no round may be dated before its count.
+- Rounds are published unsigned, and the final transaction uses only signatures that check out, so a junk signature can't stop a round.
+- **Coins checked against the blockchain before Sign is offered:** the amounts in a round must match the chain. A round claiming other amounts for the same coins is refused (it could hide a huge fee).
+
+**Relay and fetching**
+- The relay checks every event's id and fields, limits sizes, subscriptions and filters, and allows 60 events a minute per address.
+- The app reads each relay's whole record page by page, so history no longer drops out as the DAO grows.
+- The gateway no longer reports a failed broadcast as accepted.
+
+**Keys and links**
+- A private key (xprv/tprv) is refused wherever a public key is expected, with a warning not to show it.
+- Another member's passkey backup can no longer lock a member out of sign-in.
+- Only web links (http, https) are shown from the record.
+
+**Screens**
+- Funds checks on Council and Home count only a staged payout's next tranche.
+- Rule changes show values in words; a fully paid staged payout names its round; Leave says why it failed and can't be sent twice.
+- A vote closes on screen at the exact time, and the page says the count follows.
+- Pages opened before the founding show how to join; a page that fails shows a way home instead of a blank screen.
+
+Tests: 138 unit tests; a new relay end-to-end suite; all 12 end-to-end suites pass (292 checks).
+
+Still open before ALPHA DAO's founding: its own web address (I-1). After it: pin the relay to its DAO id (X-4).
+
 ## v0.8.6 · 14 November 2026
 
 From the second bounty run on COUNCIL DAO (two claimants with different address types; the council chose @Member's P2SH address, paid in tx a03bb5cb…).

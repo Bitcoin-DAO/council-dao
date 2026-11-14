@@ -4,6 +4,9 @@ import {
   DISCUSSION_KINDS,
   DISCUSSION_RATE_LIMIT,
   MAX_FUTURE_SECONDS,
+  EVENT_LIMITS,
+  REQ_LIMITS,
+  IP_EVENT_RATE_LIMIT,
   REQ_RATE_LIMIT,
   PAY_TO_RELAY_ENABLED,
   AUTH_REQUIRED,
@@ -19,6 +22,22 @@ import {
 import { verifyEventSignature, hasPaidForRelay, processEvent, queryEvents } from './relay-worker';
 
 // Session attachment data structure (minimal - auth state stored in session)
+/** btc-dao: why an event's fields cannot be stored (review X-2, X-3), or undefined. */
+function eventShapeError(e: any): string | undefined {
+  if (typeof e.id !== 'string' || !/^[0-9a-f]{64}$/.test(e.id)) return 'id must be 64 lowercase hex characters';
+  if (typeof e.pubkey !== 'string' || !/^[0-9a-f]{64}$/.test(e.pubkey)) return 'pubkey must be 64 lowercase hex characters';
+  if (typeof e.sig !== 'string' || !/^[0-9a-f]{128}$/.test(e.sig)) return 'sig must be 128 lowercase hex characters';
+  if (!Number.isSafeInteger(e.created_at) || e.created_at < 0) return 'created_at must be a whole number';
+  if (!Number.isInteger(e.kind) || e.kind < 0 || e.kind > 65535) return 'kind must be a whole number';
+  if (typeof e.content !== 'string') return 'content must be a string';
+  if (e.content.length > EVENT_LIMITS.maxContentLength) return 'content too long';
+  if (!Array.isArray(e.tags) || e.tags.length > EVENT_LIMITS.maxTags) return `at most ${EVENT_LIMITS.maxTags} tags`;
+  for (const t of e.tags) {
+    if (!Array.isArray(t) || t.length === 0 || t.length > 10 || !t.every((x: unknown) => typeof x === 'string' && x.length <= EVENT_LIMITS.maxTagValueLength)) return 'each tag must be a short list of strings';
+  }
+  return undefined;
+}
+
 interface SessionAttachment {
   sessionId: string;
   bookmark: string;
@@ -28,6 +47,7 @@ interface SessionAttachment {
   // NIP-42: Persist auth state across hibernation
   authenticatedPubkeys?: string[];
   challenge?: string;
+  ip?: string;
 }
 
 // Cache entry interface with access tracking
@@ -53,6 +73,7 @@ export class RelayWebSocket implements DurableObject {
   private doName: string;
   private processedEvents: Map<string, number> = new Map(); // eventId -> timestamp
   private discussionLimits: Map<string, RateLimiter> = new Map(); // btc-dao: per-key limit for discussion kinds
+  private ipLimits: Map<string, RateLimiter> = new Map(); // btc-dao: per-address event limit, across connections
 
   // Query cache for REQ messages
   private queryCache: Map<string, CacheEntry> = new Map();
@@ -536,6 +557,7 @@ export class RelayWebSocket implements DurableObject {
     // Create session data
     const sessionId = crypto.randomUUID();
     const host = request.headers.get('host') || url.host;
+    const ip = request.headers.get('CF-Connecting-IP') || undefined;
 
     // Create session object with NIP-42 auth state
     const session: WebSocketSession = {
@@ -547,7 +569,8 @@ export class RelayWebSocket implements DurableObject {
       bookmark: 'first-unconstrained',
       host,
       challenge: AUTH_REQUIRED ? this.generateAuthChallenge() : undefined,
-      authenticatedPubkeys: new Set()
+      authenticatedPubkeys: new Set(),
+      ip
     };
     this.sessions.set(sessionId, session);
 
@@ -559,7 +582,8 @@ export class RelayWebSocket implements DurableObject {
       doName: this.doName,
       // NIP-42: Persist auth state for hibernation survival
       authenticatedPubkeys: [],
-      challenge: session.challenge
+      challenge: session.challenge,
+      ip
     };
     server.serializeAttachment(attachment);
 
@@ -622,7 +646,8 @@ export class RelayWebSocket implements DurableObject {
         challenge: attachment.challenge || (AUTH_REQUIRED ? this.generateAuthChallenge() : undefined),
         authenticatedPubkeys: restoredPubkeys,
         // Restore payment status from attachment (survives hibernation)
-        hasPaid: attachment.hasPaid
+        hasPaid: attachment.hasPaid,
+        ip: attachment.ip
       };
       this.sessions.set(attachment.sessionId, session);
 
@@ -635,6 +660,12 @@ export class RelayWebSocket implements DurableObject {
     try {
       let parsedMessage: any;
 
+      // btc-dao: refuse oversized messages before parsing them (review X-3)
+      const size = typeof message === 'string' ? message.length : message.byteLength;
+      if (size > EVENT_LIMITS.maxMessageBytes) {
+        this.sendError(ws, 'invalid: message too large');
+        return;
+      }
       if (typeof message === 'string') {
         parsedMessage = JSON.parse(message);
       } else {
@@ -653,7 +684,8 @@ export class RelayWebSocket implements DurableObject {
         doName: this.doName,
         hasPaid: session.hasPaid,
         authenticatedPubkeys: Array.from(session.authenticatedPubkeys),
-        challenge: session.challenge
+        challenge: session.challenge,
+        ip: session.ip
       };
       ws.serializeAttachment(updatedAttachment);
 
@@ -779,6 +811,27 @@ export class RelayWebSocket implements DurableObject {
         event.content === undefined || event.content === null) {
         this.sendOK(session.webSocket, event.id || '', false, 'invalid: missing required fields');
         return;
+      }
+
+      // btc-dao: every field has the form and size the protocol needs, before anything else (review X-2, X-3)
+      const shapeError = eventShapeError(event);
+      if (shapeError) {
+        this.sendOK(session.webSocket, typeof event.id === 'string' ? event.id.slice(0, 64) : '', false, `invalid: ${shapeError}`);
+        return;
+      }
+
+      // btc-dao: events per network address, across its connections (review X-3)
+      if (session.ip) {
+        let lim = this.ipLimits.get(session.ip);
+        if (!lim) {
+          lim = new RateLimiter(IP_EVENT_RATE_LIMIT.rate, IP_EVENT_RATE_LIMIT.capacity);
+          this.ipLimits.set(session.ip, lim);
+          if (this.ipLimits.size > 10000) this.ipLimits.delete(this.ipLimits.keys().next().value!);
+        }
+        if (!lim.removeToken()) {
+          this.sendOK(session.webSocket, event.id, false, 'rate-limited: too many events from this address, try again in a minute');
+          return;
+        }
       }
 
       // btc-dao: no events dated far in the future (config MAX_FUTURE_SECONDS)
@@ -959,6 +1012,24 @@ export class RelayWebSocket implements DurableObject {
       this.sendClosed(session.webSocket, subscriptionId, 'error: at least one filter required');
       return;
     }
+    // btc-dao: bounded subscriptions and filters (review X-5)
+    if (filters.length > REQ_LIMITS.maxFilters) {
+      this.sendClosed(session.webSocket, subscriptionId, `invalid: at most ${REQ_LIMITS.maxFilters} filters`);
+      return;
+    }
+    if (!session.subscriptions.has(subscriptionId) && session.subscriptions.size >= REQ_LIMITS.maxSubscriptions) {
+      this.sendClosed(session.webSocket, subscriptionId, `rate-limited: at most ${REQ_LIMITS.maxSubscriptions} subscriptions per connection`);
+      return;
+    }
+    for (const filter of filters) {
+      if (typeof filter !== 'object' || filter === null || Array.isArray(filter)) continue; // refused below
+      for (const [k, v] of Object.entries(filter)) {
+        if (Array.isArray(v) && v.length > REQ_LIMITS.maxFilterValues) {
+          this.sendClosed(session.webSocket, subscriptionId, `invalid: at most ${REQ_LIMITS.maxFilterValues} values in ${k}`);
+          return;
+        }
+      }
+    }
 
     // Validate each filter
     for (const filter of filters) {
@@ -1003,9 +1074,10 @@ export class RelayWebSocket implements DurableObject {
         return;
       }
 
-      // Cap limit at 5000 if it's too high or set default if not provided
-      if (filter.limit && filter.limit > 500) {
-        filter.limit = 500;
+      // btc-dao: limit is a whole number from 1 to 500; anything else (including -1, which SQLite reads as "no
+      // limit") becomes 500 (review X-5)
+      if (!Number.isInteger(filter.limit) || filter.limit < 1 || filter.limit > REQ_LIMITS.maxLimit) {
+        filter.limit = REQ_LIMITS.maxLimit;
       } else if (!filter.limit) {
         filter.limit = 500;
       }

@@ -44,11 +44,14 @@ __export(config_exports, {
   DB_SIZE_THRESHOLD_GB: () => DB_SIZE_THRESHOLD_GB,
   DISCUSSION_KINDS: () => DISCUSSION_KINDS,
   DISCUSSION_RATE_LIMIT: () => DISCUSSION_RATE_LIMIT,
+  EVENT_LIMITS: () => EVENT_LIMITS,
   GLOBAL_QUERY_CACHE: () => GLOBAL_QUERY_CACHE,
+  IP_EVENT_RATE_LIMIT: () => IP_EVENT_RATE_LIMIT,
   MAX_FUTURE_SECONDS: () => MAX_FUTURE_SECONDS,
   PAY_TO_RELAY_ENABLED: () => PAY_TO_RELAY_ENABLED,
   PUBKEY_RATE_LIMIT: () => PUBKEY_RATE_LIMIT,
   RELAY_ACCESS_PRICE_SATS: () => RELAY_ACCESS_PRICE_SATS,
+  REQ_LIMITS: () => REQ_LIMITS,
   REQ_RATE_LIMIT: () => REQ_RATE_LIMIT,
   allowedEventKinds: () => allowedEventKinds,
   allowedNip05Domains: () => allowedNip05Domains,
@@ -278,6 +281,24 @@ var allowedEventKinds = new Set(
 var DISCUSSION_KINDS = /* @__PURE__ */ new Set([3587, 3588, 3591, 3592]);
 var DISCUSSION_RATE_LIMIT = { rate: 10 / 6e4, capacity: 20 };
 var MAX_FUTURE_SECONDS = 10 * 60;
+var EVENT_LIMITS = {
+  maxMessageBytes: 256 * 1024,
+  // a whole client message
+  maxContentLength: 128 * 1024,
+  // event content (a round's PSBT with many coins stays well under)
+  maxTags: 50,
+  maxTagValueLength: 1024
+};
+var REQ_LIMITS = {
+  maxSubscriptions: 20,
+  // per connection
+  maxFilters: 10,
+  // per REQ
+  maxFilterValues: 500,
+  // entries in any filter array (ids, authors, kinds, tag values)
+  maxLimit: 500
+};
+var IP_EVENT_RATE_LIMIT = { rate: 60 / 6e4, capacity: 120 };
 var ALLOWED_DAO_IDS = [];
 var blockedContent = /* @__PURE__ */ new Set([]);
 var checkValidNip05 = false;
@@ -3188,6 +3209,9 @@ async function verifyEventSignature(event) {
       new TextEncoder().encode(serializedEventData)
     );
     const messageHash = new Uint8Array(messageHashBuffer);
+    const idOfContent = Array.from(messageHash, (b) => b.toString(16).padStart(2, "0")).join("");
+    if (idOfContent !== event.id)
+      return false;
     const publicKeyBytes = hexToBytes2(event.pubkey);
     return schnorr.verify(signatureBytes, messageHash, publicKeyBytes);
   } catch (error) {
@@ -4231,8 +4255,7 @@ async function queryEvents(filters, bookmark, env) {
           const countResult = await session.prepare(countQuery.sql).bind(...countQuery.params).first();
           const estimatedRows = countResult?.count || 0;
           if (estimatedRows > 1e4) {
-            console.warn(`Query precheck: estimated ${estimatedRows} rows, skipping filter to prevent timeout`);
-            continue;
+            console.warn(`Query precheck: estimated ${estimatedRows} rows, proceeding with the limit`);
           } else {
             console.log(`Query precheck: estimated ${estimatedRows} rows, proceeding`);
           }
@@ -5228,12 +5251,38 @@ var relay_worker_default = {
 };
 
 // src/durable-object.ts
+function eventShapeError(e) {
+  if (typeof e.id !== "string" || !/^[0-9a-f]{64}$/.test(e.id))
+    return "id must be 64 lowercase hex characters";
+  if (typeof e.pubkey !== "string" || !/^[0-9a-f]{64}$/.test(e.pubkey))
+    return "pubkey must be 64 lowercase hex characters";
+  if (typeof e.sig !== "string" || !/^[0-9a-f]{128}$/.test(e.sig))
+    return "sig must be 128 lowercase hex characters";
+  if (!Number.isSafeInteger(e.created_at) || e.created_at < 0)
+    return "created_at must be a whole number";
+  if (!Number.isInteger(e.kind) || e.kind < 0 || e.kind > 65535)
+    return "kind must be a whole number";
+  if (typeof e.content !== "string")
+    return "content must be a string";
+  if (e.content.length > EVENT_LIMITS.maxContentLength)
+    return "content too long";
+  if (!Array.isArray(e.tags) || e.tags.length > EVENT_LIMITS.maxTags)
+    return `at most ${EVENT_LIMITS.maxTags} tags`;
+  for (const t of e.tags) {
+    if (!Array.isArray(t) || t.length === 0 || t.length > 10 || !t.every((x) => typeof x === "string" && x.length <= EVENT_LIMITS.maxTagValueLength))
+      return "each tag must be a short list of strings";
+  }
+  return void 0;
+}
+__name(eventShapeError, "eventShapeError");
 var _RelayWebSocket = class _RelayWebSocket {
   constructor(state, env) {
     this.processedEvents = /* @__PURE__ */ new Map();
     // eventId -> timestamp
     this.discussionLimits = /* @__PURE__ */ new Map();
     // btc-dao: per-key limit for discussion kinds
+    this.ipLimits = /* @__PURE__ */ new Map();
+    // btc-dao: per-address event limit, across connections
     // Query cache for REQ messages
     this.queryCache = /* @__PURE__ */ new Map();
     this.QUERY_CACHE_TTL = 6e4;
@@ -5574,6 +5623,7 @@ var _RelayWebSocket = class _RelayWebSocket {
     const [client, server] = Object.values(webSocketPair);
     const sessionId = crypto.randomUUID();
     const host = request.headers.get("host") || url.host;
+    const ip = request.headers.get("CF-Connecting-IP") || void 0;
     const session = {
       id: sessionId,
       webSocket: server,
@@ -5583,7 +5633,8 @@ var _RelayWebSocket = class _RelayWebSocket {
       bookmark: "first-unconstrained",
       host,
       challenge: AUTH_REQUIRED ? this.generateAuthChallenge() : void 0,
-      authenticatedPubkeys: /* @__PURE__ */ new Set()
+      authenticatedPubkeys: /* @__PURE__ */ new Set(),
+      ip
     };
     this.sessions.set(sessionId, session);
     const attachment = {
@@ -5593,7 +5644,8 @@ var _RelayWebSocket = class _RelayWebSocket {
       doName: this.doName,
       // NIP-42: Persist auth state for hibernation survival
       authenticatedPubkeys: [],
-      challenge: session.challenge
+      challenge: session.challenge,
+      ip
     };
     server.serializeAttachment(attachment);
     this.state.acceptWebSocket(server);
@@ -5637,7 +5689,8 @@ var _RelayWebSocket = class _RelayWebSocket {
         challenge: attachment.challenge || (AUTH_REQUIRED ? this.generateAuthChallenge() : void 0),
         authenticatedPubkeys: restoredPubkeys,
         // Restore payment status from attachment (survives hibernation)
-        hasPaid: attachment.hasPaid
+        hasPaid: attachment.hasPaid,
+        ip: attachment.ip
       };
       this.sessions.set(attachment.sessionId, session);
       if (AUTH_REQUIRED && !isAuthenticated && session.challenge) {
@@ -5646,6 +5699,11 @@ var _RelayWebSocket = class _RelayWebSocket {
     }
     try {
       let parsedMessage;
+      const size = typeof message === "string" ? message.length : message.byteLength;
+      if (size > EVENT_LIMITS.maxMessageBytes) {
+        this.sendError(ws, "invalid: message too large");
+        return;
+      }
       if (typeof message === "string") {
         parsedMessage = JSON.parse(message);
       } else {
@@ -5661,7 +5719,8 @@ var _RelayWebSocket = class _RelayWebSocket {
         doName: this.doName,
         hasPaid: session.hasPaid,
         authenticatedPubkeys: Array.from(session.authenticatedPubkeys),
-        challenge: session.challenge
+        challenge: session.challenge,
+        ip: session.ip
       };
       ws.serializeAttachment(updatedAttachment);
     } catch (error) {
@@ -5758,6 +5817,24 @@ var _RelayWebSocket = class _RelayWebSocket {
       if (!event.id || !event.pubkey || !event.sig || !event.created_at || event.kind === void 0 || !Array.isArray(event.tags) || event.content === void 0 || event.content === null) {
         this.sendOK(session.webSocket, event.id || "", false, "invalid: missing required fields");
         return;
+      }
+      const shapeError = eventShapeError(event);
+      if (shapeError) {
+        this.sendOK(session.webSocket, typeof event.id === "string" ? event.id.slice(0, 64) : "", false, `invalid: ${shapeError}`);
+        return;
+      }
+      if (session.ip) {
+        let lim = this.ipLimits.get(session.ip);
+        if (!lim) {
+          lim = new RateLimiter(IP_EVENT_RATE_LIMIT.rate, IP_EVENT_RATE_LIMIT.capacity);
+          this.ipLimits.set(session.ip, lim);
+          if (this.ipLimits.size > 1e4)
+            this.ipLimits.delete(this.ipLimits.keys().next().value);
+        }
+        if (!lim.removeToken()) {
+          this.sendOK(session.webSocket, event.id, false, "rate-limited: too many events from this address, try again in a minute");
+          return;
+        }
       }
       if (event.created_at > Math.floor(Date.now() / 1e3) + MAX_FUTURE_SECONDS) {
         this.sendOK(session.webSocket, event.id, false, "invalid: created_at is too far in the future");
@@ -5882,6 +5959,24 @@ var _RelayWebSocket = class _RelayWebSocket {
       this.sendClosed(session.webSocket, subscriptionId, "error: at least one filter required");
       return;
     }
+    if (filters.length > REQ_LIMITS.maxFilters) {
+      this.sendClosed(session.webSocket, subscriptionId, `invalid: at most ${REQ_LIMITS.maxFilters} filters`);
+      return;
+    }
+    if (!session.subscriptions.has(subscriptionId) && session.subscriptions.size >= REQ_LIMITS.maxSubscriptions) {
+      this.sendClosed(session.webSocket, subscriptionId, `rate-limited: at most ${REQ_LIMITS.maxSubscriptions} subscriptions per connection`);
+      return;
+    }
+    for (const filter of filters) {
+      if (typeof filter !== "object" || filter === null || Array.isArray(filter))
+        continue;
+      for (const [k, v] of Object.entries(filter)) {
+        if (Array.isArray(v) && v.length > REQ_LIMITS.maxFilterValues) {
+          this.sendClosed(session.webSocket, subscriptionId, `invalid: at most ${REQ_LIMITS.maxFilterValues} values in ${k}`);
+          return;
+        }
+      }
+    }
     for (const filter of filters) {
       if (typeof filter !== "object" || filter === null) {
         this.sendClosed(session.webSocket, subscriptionId, "invalid: filter must be an object");
@@ -5915,8 +6010,8 @@ var _RelayWebSocket = class _RelayWebSocket {
         this.sendClosed(session.webSocket, subscriptionId, "invalid: too many event IDs (max 5000)");
         return;
       }
-      if (filter.limit && filter.limit > 500) {
-        filter.limit = 500;
+      if (!Number.isInteger(filter.limit) || filter.limit < 1 || filter.limit > REQ_LIMITS.maxLimit) {
+        filter.limit = REQ_LIMITS.maxLimit;
       } else if (!filter.limit) {
         filter.limit = 500;
       }

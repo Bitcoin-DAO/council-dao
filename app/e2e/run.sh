@@ -47,6 +47,10 @@ if [ "$WHICH" = all ] || [ "$WHICH" = founding ]; then
   node "$HERE/founding.e2e.cjs"
   node "$HERE/camera.e2e.cjs"
 fi
+if [ "$WHICH" = all ] || [ "$WHICH" = relay ]; then
+  start_relay
+  node "$HERE/relay.e2e.cjs"
+fi
 if [ "$WHICH" = all ] || [ "$WHICH" = governance ]; then
   start_relay
   node "$HERE/governance.e2e.cjs"

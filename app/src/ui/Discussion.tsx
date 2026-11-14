@@ -7,7 +7,7 @@ import { POST_MAX, timeline, type DraftContent, type DraftVersion, type Thread }
 import { proposalLabel, proposalSchemaError, type DaoState, type Output, type ProposalContent } from '../core/state';
 import type { ReportView } from '../core/delivery';
 import { nowSec } from '../core/util';
-import { Footer, Header, askConfirm, errText, go } from './parts';
+import { Footer, Header, askConfirm, errText, go, safeHref } from './parts';
 import { statusText, typeLabel, useNameOf } from './Proposals';
 
 /** "New since your last visit": when this phone last opened each thread (no server, no notifications). */
@@ -290,7 +290,7 @@ export function ThreadView({ id }: { id: string }) {
             <div class="card tint" style="gap:4px">
               <span class="small"><strong>{t('ds.reportCard', { n: x.r.tranche })}</strong> · {nameOf(x.r.event.pubkey)} · {fmtDateTime(x.r.event.created_at)}{paidReport(x.r, th, s) ? ` · ${t('dl.st.paid')}` : ''}</span>
               <p style="white-space:pre-wrap;margin:0;overflow-wrap:anywhere">{linkify(x.r.text)}</p>
-              {x.r.link && <a href={x.r.link} target="_blank" rel="noopener noreferrer">{t('pd.link')} ↗</a>}
+              {safeHref(x.r.link) && <a href={safeHref(x.r.link)} target="_blank" rel="noopener noreferrer">{t('pd.link')} ↗</a>}
             </div>
           ) : x.kind === 'version' ? (
             x.v === latest ? <p class="small">{t('ds.versionAt', { n: x.v.n, date: fmtDateTime(x.v.event.created_at) })} ↑</p> : <VersionCard v={x.v} th={th} />

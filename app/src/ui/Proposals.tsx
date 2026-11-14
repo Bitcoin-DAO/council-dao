@@ -1,13 +1,13 @@
 // Proposals: list, detail with voting, confirmation status, final count and record (protocol 4).
 import { councilChangeError, newTreasuryAddress, sweepable, type CouncilChange } from '../core/council';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { signAndPublish, useApp } from '../app';
 import { fmtDate, fmtDateTime, fmtLeft, fmtSats, t } from '../i18n';
 import { KIND, tagValue, type Event } from '../core/events';
 import { proposalLabel, type Choice, type Output, type ProposalView } from '../core/state';
 import { formatShortCode, shortCode } from '../core/shortcode';
-import { parseJson } from '../core/util';
-import { Address, Footer, Header, errText, go } from './parts';
+import { nowSec, parseJson } from '../core/util';
+import { Address, Footer, Header, errText, go, safeHref } from './parts';
 import { PaymentLine } from './Round';
 import { Delivery } from './Delivery';
 import { cadenceOf } from '../core/time';
@@ -15,6 +15,7 @@ import { cadenceOf } from '../core/time';
 export const typeLabel = (type: string) => t(`type.${type}` as 'type.payout');
 
 export function statusText(p: ProposalView, now: number) {
+  if (p.status === 'open' && nowSec() >= p.closeAt) return t('status.awaiting_tally'); // closed since the last refresh
   return p.status === 'open' ? t('status.open', { left: fmtLeft(p.closeAt - now) }) : t(`status.${p.status}` as 'status.passed');
 }
 
@@ -92,6 +93,16 @@ export function ProposalDetail({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const p = s.proposals.find(x => x.event.id === id);
+  // The vote closes on time on screen, not at the next refresh (review U-7): re-render at the close, and every
+  // half-minute meanwhile for the countdown.
+  const [, tick] = useState(0);
+  const closeAt = p?.closeAt;
+  useEffect(() => {
+    if (closeAt === undefined || nowSec() >= closeAt) return;
+    const atClose = setTimeout(() => tick(n => n + 1), (closeAt - nowSec()) * 1000 + 300);
+    const every = setInterval(() => tick(n => n + 1), 30_000);
+    return () => { clearTimeout(atClose); clearInterval(every); };
+  }, [closeAt]);
   if (!p) {
     return (
       <>
@@ -106,8 +117,10 @@ export function ProposalDetail({ id }: { id: string }) {
   const myVote = myPerson ? p.votes.get(myPerson)?.choice : undefined;
   const eligible = !!myPerson && p.eligible.has(myPerson);
   const m = s.settingsAt(p.event.created_at).content.threshold;
+  const votingOpen = p.status === 'open' && nowSec() < p.closeAt;
 
   const vote = async (choice: Choice) => {
+    if (nowSec() >= p.closeAt) { tick(n => n + 1); return; } // closed while the page was open
     setMsg(undefined);
     setBusy(true);
     try {
@@ -170,7 +183,7 @@ export function ProposalDetail({ id }: { id: string }) {
         <section class="card">
           <h3>{t('pd.what')}</h3>
           <p style="white-space:pre-wrap">{c.summary}</p>
-          {c.link && <a href={c.link.url} target="_blank" rel="noopener noreferrer">{t('pd.link')} ↗</a>}
+          {safeHref(c.link?.url) && <a href={safeHref(c.link?.url)} target="_blank" rel="noopener noreferrer">{t('pd.link')} ↗</a>}
           <ThreadLine id={p.event.id} />
           <Payload p={p} />
           {p.status === 'passed' && <PaymentLine id={p.event.id} />}
@@ -209,8 +222,9 @@ export function ProposalDetail({ id }: { id: string }) {
           <div class="kv"><span>{t('choice.abstain')}</span><span>{p.counts.abstain}</span></div>
           <p class="small">{t('pd.quorum', { n: p.votes.size, needed: p.quorumNeeded, eligible: p.eligible.size })}</p>
           <p class="small">{p.twoThirds ? t('pd.majority2') : t('pd.majority1')}</p>
-          <p class="small">{p.status === 'open' ? t('pd.closes', { date: fmtDateTime(p.closeAt) }) : t('pd.closed', { date: fmtDateTime(p.closeAt) })}</p>
-          {p.status === 'open' && (
+          <p class="small">{votingOpen ? t('pd.closes', { date: fmtDateTime(p.closeAt) }) : t('pd.closed', { date: fmtDateTime(p.closeAt) })}</p>
+          {p.status === 'open' && !votingOpen && <p class="small">{t('pd.countingSoon')}</p>}
+          {votingOpen && (
             !app.me || !app.secret ? (
               <button type="button" class="btn secondary" onClick={() => go('/join')}>{t('pd.signInToVote')}</button>
             ) : !eligible ? (
@@ -309,7 +323,7 @@ function Payload({ p }: { p: ProposalView }) {
       return (
         <>
           {(pl.changes as { path: string; from: unknown; to: unknown }[]).map(ch => (
-            <p class="small">{t('pd.change', { rule: ruleLabel(ch.path.slice(6)), from: JSON.stringify(ch.from), to: JSON.stringify(ch.to) })}</p>
+            <p class="small">{t('pd.change', { rule: ruleLabel(ch.path.slice(6)), from: ruleValue(ch.path.slice(6), ch.from), to: ruleValue(ch.path.slice(6), ch.to) })}</p>
           ))}
         </>
       );
@@ -367,7 +381,13 @@ export function ruleValue(key: string, v: unknown): string {
     case 'feePolicy': return v === 'economical' ? t('fee.economical') : t('fee.fast');
     case 'maxFeeRateSatVb': return `${v} sat/vB`;
     case 'treasuryCapSats': return `${fmtSats(Number(v))} sats`;
-    default: return String(v);
+    case 'lapseAfterRounds': return String(v);
+    default:
+      // Lists and other values in words, never as raw JSON (review U-4).
+      if (v === undefined || v === null || v === '') return '—';
+      if (Array.isArray(v)) return v.map(x => String(x)).join(', ');
+      if (typeof v === 'object') return Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k}: ${x === null ? '—' : String(x)}`).join(', ');
+      return String(v);
   }
 }
 

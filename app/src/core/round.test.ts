@@ -32,8 +32,8 @@ describe('payout rounds (6.1-6.2)', () => {
     const signed = [0, 2, 4].map(i => signWithMnemonicKey(r.psbt, masters[i]));
     for (const [n, i] of [0, 2, 4].entries()) expect(memberSignatures(signed[n], d, 'testnet4', keys[i], ins).size).toBe(1);
     expect(memberSignatures(signed[0], d, 'testnet4', keys[1], ins).size).toBe(0); // not @c1's signature
-    expect(() => finalizeRound(signed.slice(0, 2))).toThrow();
-    const final = finalizeRound(signed);
+    expect(() => finalizeRound(r.psbt, signed.slice(0, 2))).toThrow();
+    const final = finalizeRound(r.psbt, signed);
     expect(final.txid).toBe(ins.txid);
     // hand to embit for an independent check (see e2e/embit-check.py)
     writeFileSync('/tmp/btcdao-round.json', JSON.stringify({ psbt: r.psbt, signed, hex: final.hex, utxos: r.inputs }));

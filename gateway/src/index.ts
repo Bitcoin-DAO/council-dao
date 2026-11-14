@@ -166,7 +166,11 @@ async function read(kind: Kind, sources: string[], path: string, search: string,
 
 // ---- broadcasting: send to every source, so the transaction reaches several nodes ----
 
-const ALREADY = /already|txn-already|known|exists|in block ?chain|missing ?inputs.*confirmed/i;
+// Messages that mean "this transaction is already in the mempool or a block", from Bitcoin Core (through Blockbook
+// or Esplora). Anchored to those messages: a bare "known" also matched "unknown error" and Cloudflare's error pages,
+// so a refused broadcast was reported as accepted (review X-6). Never matched against an HTML page.
+const ALREADY = /txn-already-in-mempool|txn-already-known|transaction already in block ?chain|already in block ?chain|outputs already in utxo set|\balready known\b/i;
+const already = (msg: string) => !/^\s*</.test(msg) && ALREADY.test(msg);
 
 async function broadcast(kind: Kind, env: Env, hex: string, h: Record<string, string>): Promise<Response> {
   let txid: string;
@@ -183,13 +187,13 @@ async function broadcast(kind: Kind, env: Env, hex: string, h: Record<string, st
       const j = (await r.json().catch(() => ({}))) as { result?: string; error?: string | { message?: string } };
       if (r.ok && j.result?.trim() === txid) return { base, ok: true };
       const msg = typeof j.error === 'string' ? j.error : (j.error?.message ?? `${r.status}`);
-      return { base, ok: ALREADY.test(msg), msg };
+      return { base, ok: already(msg), msg };
     }),
     ...list(env.ESPLORA).map(async base => {
       const r = await upstream(`${base}/tx`, { method: 'POST', body: hex.trim(), headers: { 'Content-Type': 'text/plain' } });
       const text = (await r.text()).trim();
       if (r.ok && text === txid) return { base, ok: true };
-      return { base, ok: ALREADY.test(text), msg: r.ok ? 'unexpected answer' : text.slice(0, 200) || `${r.status}` };
+      return { base, ok: !r.ok && already(text), msg: r.ok ? 'unexpected answer' : text.slice(0, 200) || `${r.status}` };
     }),
   ];
   const results = await Promise.allSettled(sends);
@@ -302,6 +306,8 @@ export default {
 
     if (req.method === 'POST') {
       if ((kind === 'bb' && /^\/api\/v2\/sendtx\/?$/.test(path)) || (kind === 'esplora' && path === '/tx')) {
+        // Refuse an oversized body before reading it (review, low)
+        if (Number(req.headers.get('content-length') ?? 0) > 400_000) return reply(413, JSON.stringify({ error: 'too large' }), 'application/json', h);
         const hex = await req.text();
         if (hex.length > 400_000) return reply(413, JSON.stringify({ error: 'too large' }), 'application/json', h);
         return broadcast(kind, env, hex, h);

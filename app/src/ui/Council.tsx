@@ -5,7 +5,7 @@ import { useState } from 'preact/hooks';
 import { chainSeen, signAndPublish, useApp } from '../app';
 import { fmtSats, t } from '../i18n';
 import { parseDescriptor } from '../core/descriptor';
-import { missingFunds } from './Round';
+import { missingFunds, nextRoundOutputs } from './Round';
 import { KIND, type Event } from '../core/events';
 import { parseFounderCode, type FounderCode } from '../core/identity';
 import { formatShortCode, shortCode } from '../core/shortcode';
@@ -104,7 +104,7 @@ export function Council() {
   const waitingProps = s.proposals.filter(p => s.payments.get(p.event.id)?.status === 'waiting');
   const cur = s.settings[s.settings.length - 1].content;
   const shortOfFunds = app.treasury && waitingPay > 0 && !waitingProps.some(p => p.content.type === 'close')
-    ? missingFunds(app.treasury.utxos.reduce((a, u) => a + u.value, 0), waitingProps.flatMap(p => (p.content.payload.outputs as Output[]) ?? []), parseDescriptor(cur.descriptor, s.founded!.config.network), app.treasury.utxos.length, 1, s.founded!.config.network)
+    ? missingFunds(app.treasury.utxos.reduce((a, u) => a + u.value, 0), waitingProps.flatMap(p => nextRoundOutputs(s, p)), parseDescriptor(cur.descriptor, s.founded!.config.network), app.treasury.utxos.length, 1, s.founded!.config.network)
     : 0;
   const lastRoster = s.rosters[s.rosters.length - 1].content.version;
   const lastSettings = s.settings[s.settings.length - 1].content.version;

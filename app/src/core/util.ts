@@ -37,13 +37,29 @@ export function jcs(value: unknown): string {
 
 export const hashJson = (value: unknown): string => sha256Hex(jcs(value));
 
+/** JSON from an event or a file; undefined when it is not JSON or holds a number JSON cannot round-trip (1e999). */
 export function parseJson<T = unknown>(s: string): T | undefined {
   try {
-    return JSON.parse(s) as T;
+    return JSON.parse(s, (_k, v) => {
+      if (typeof v === 'number' && !Number.isFinite(v)) throw new Error('non-finite number');
+      return v;
+    }) as T;
   } catch {
     return undefined;
   }
 }
+
+/** A time zone the platform knows; anything else would throw wherever dates are formatted (review R-H2). */
+export function validTimeZone(tz: unknown): tz is string {
+  if (typeof tz !== 'string' || !tz || tz.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+export const safeTimeZone = (tz: unknown) => (validTimeZone(tz) ? tz : 'UTC');
 
 /**
  * The app's time, which decides every date it shows or signs: the phone's clock corrected by the offset read from
