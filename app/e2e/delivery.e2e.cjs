@@ -79,7 +79,9 @@ async function claim(page, pid, address) {
   await open(page, `#/p/${pid}`);
   await page.getByLabel('Il tuo indirizzo bitcoin').fill(address);
   await page.getByRole('button', { name: 'Richiedi la taglia' }).click();
-  await page.getByText('L\'hai richiesta.', { exact: false }).waitFor({ timeout: 15000 });
+  await page.getByText('L\'hai richiesta con', { exact: false }).waitFor({ timeout: 15000 });
+  check(await seen(page.getByText(address).first()), 'the claim shows the address claimed with');
+  check(await seen(page.getByText('Se scelto, sarai pagato a')), 'the report form shows where the claimant would be paid');
 }
 
 (async () => {

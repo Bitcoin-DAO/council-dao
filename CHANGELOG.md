@@ -2,6 +2,15 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.8.6 · 14 November 2026
+
+From the second bounty run on COUNCIL DAO (two claimants with different address types; the council chose @Member's P2SH address, paid in tx a03bb5cb…).
+- **Claim address filled in:** a first claim on a bounty starts from the member's payout address in their profile, if saved (editable).
+- **The claimed address is shown:** "You claimed it with …" on the bounty, and "If chosen, you are paid at …" on the report form.
+- **Every claimant's report is linked** beside the tranche, not only the latest.
+- **Neutral claim wording:** any member may claim; the council pays one claimant, chosen when it signs the round.
+- Test: the paid-on-delivery suite checks the claimed address on the bounty and the report form.
+
 ## v0.8.5 · 14 November 2026
 
 Found on COUNCIL DAO.

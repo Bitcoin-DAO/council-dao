@@ -19,7 +19,7 @@ export function Delivery({ p }: { p: ProposalView }) {
   const requested = pl.report === 'requested';
   const [text, setText] = useState('');
   const [link, setLink] = useState('');
-  const [claimAddr, setClaimAddr] = useState('');
+  const [claimTyped, setClaimAddr] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>();
   if (p.content.type !== 'payout' || (!schedule && !requested)) return null;
@@ -30,6 +30,9 @@ export function Delivery({ p }: { p: ProposalView }) {
   const passed = p.status === 'passed';
   const open = passed && pay && pay.status !== 'paid' && pay.status !== 'lapsed';
   const myClaim = claims.find(c => c.person === me);
+  // A first claim starts from the member's payout address in their profile, if they saved one (editable).
+  const standing = app.me ? s.standingAt(app.me.key, s.now)?.address : undefined;
+  const claimAddr = claimTyped ?? (myClaim ? '' : standing ?? '');
   const chosen = isBounty ? pay?.tranches?.[0]?.status === 'paid' ? claims.find(c => c.address === pay.tranches![0].address)?.person : undefined : undefined;
   const mayReport = !!me && !!app.secret && (
     me === s.personOf(p.event.pubkey)
@@ -54,7 +57,7 @@ export function Delivery({ p }: { p: ProposalView }) {
   });
   const claim = () => run(async () => {
     await signAndPublish(KIND.claim, { address: claimAddr.trim() }, [['e', p.event.id]]);
-    setClaimAddr('');
+    setClaimAddr(undefined);
   });
   const addrOk = validAddress(claimAddr.trim(), app.site!.network) && !s.isTreasuryAddress(claimAddr.trim());
   const statusText = (st: string) => t(`dl.st.${st}` as 'dl.st.paid');
@@ -70,7 +73,9 @@ export function Delivery({ p }: { p: ProposalView }) {
           </div>
           <span class="small">
             {v.dueAt ? t('dl.due', { date: fmtDate(v.dueAt) }) : t('dl.dueDays', { d: schedule[v.n - 1].due_days })}
-            {v.report && <> · <a href={`#/p/${p.event.id}`} onClick={e => (e.preventDefault(), document.getElementById(`report-${v.report!.event.id}`)?.scrollIntoView())}>{t('dl.reportBy', { name: nameOf(v.report.event.pubkey) })}</a></>}
+            {reports.filter(r => r.tranche === v.n).filter((r, i, all) => all.findIndex(x => x.person === r.person) === i).map(r => (
+              <> · <a href={`#/p/${p.event.id}`} onClick={e => (e.preventDefault(), document.getElementById(`report-${r.event.id}`)?.scrollIntoView())}>{t('dl.reportBy', { name: nameOf(r.event.pubkey) })}</a></>
+            ))}
           </span>
         </div>
       ))}
@@ -89,7 +94,7 @@ export function Delivery({ p }: { p: ProposalView }) {
           <span class="small">{claims.length ? t('dl.claims', { names: claims.map(c => nameOf(c.event.pubkey)).join(', ') }) : t('dl.noClaims')}</span>
           {open && !chosen && me && app.secret && (
             <>
-              <span class="small">{myClaim ? t('dl.claimedYou') : t('dl.claimText')}</span>
+              <span class="small">{myClaim ? <>{t('dl.claimedYouAt')} <span class="mono" style="overflow-wrap:anywhere">{myClaim.address}</span>. {t('dl.claimedYou')}</> : t('dl.claimText')}</span>
               <label class="field">{t('dl.claimAddress')}<input type="text" class="mono" autoComplete="off" spellcheck={false} value={claimAddr} onInput={e => setClaimAddr((e.target as HTMLInputElement).value)} /></label>
               <button type="button" class="btn secondary" disabled={busy || !addrOk} onClick={claim}>{myClaim ? t('dl.claimAgain') : t('dl.claim')}</button>
             </>
@@ -101,6 +106,7 @@ export function Delivery({ p }: { p: ProposalView }) {
         <div class="stack" style="gap:6px">
           <label class="field">
             {schedule ? t('dl.reportFor', { n: tranche }) : t('dl.reportOne')}
+            {isBounty && myClaim && <span class="small" style="font-weight:normal">{t('dl.payTo')} <span class="mono" style="overflow-wrap:anywhere">{myClaim.address}</span></span>}
             <textarea maxLength={REPORT_MAX} value={text} style="font-family:inherit;font-size:16px" onInput={e => setText((e.target as HTMLTextAreaElement).value)} />
           </label>
           <label class="field">{t('np.link')}<input type="text" inputMode="url" placeholder="https://" value={link} onInput={e => setLink((e.target as HTMLInputElement).value)} /></label>
