@@ -10,7 +10,7 @@ import type { GenesisCandidate } from '../core/state';
 import { shortCode, formatShortCode } from '../core/shortcode';
 import { createPasskey, passkeysAvailable } from '../lib/passkey';
 import { store, type PendingFounder } from '../lib/store';
-import { Header, ProtectKey, PrintCard, WordsCheck, Qr, ShortCode, Steps, errText, go, askConfirm } from './parts';
+import { GroupText, Header, ProtectKey, PrintCard, ShareButton, WordsCheck, Qr, ShortCode, Steps, errText, go, askConfirm } from './parts';
 import { Candidate } from './Candidate';
 
 export function Founder() {
@@ -68,7 +68,7 @@ export function Founder() {
           <ShortCode pubkey={pending.pubkey} />
           <span class="small">{t('fs.shortCodeLabel')}</span>
         </div>
-        <p class="small">{t('fs.remote')}</p>
+        <p class="small"><GroupText withKey="fs.remoteGroup" withoutKey="fs.remote" /></p>
         <ShareButton text={t('fs.shareText', { dao: site.name, role: t(pending.council ? 'fs.roleCouncil' : 'fs.roleFounder'), name: pending.name, short: formatShortCode(shortCode(pending.pubkey)), code: text })} />
         <CopyButton text={text} label={t('fs.copyCode')} />
         {!pending.prfSupported && <p class="warnbox">{t('fs.noPrf')}</p>}
@@ -89,27 +89,6 @@ async function restartSignup(site: string) {
 }
 
 /** Opens the phone's share sheet with one message: who, the short code and the full code. Copies it where sharing is not available. */
-function ShareButton({ text }: { text: string }) {
-  const [ok, setOk] = useState(false);
-  return (
-    <button
-      type="button"
-      class="btn secondary"
-      onClick={async () => {
-        try {
-          if (navigator.share) await navigator.share({ text });
-          else await navigator.clipboard.writeText(text);
-          setOk(true);
-          setTimeout(() => setOk(false), 2000);
-        } catch {
-          /* cancelled or not allowed */
-        }
-      }}
-    >
-      {ok ? t('fs.shared') : t('fs.share')}
-    </button>
-  );
-}
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [ok, setOk] = useState(false);
@@ -265,12 +244,17 @@ function Wait({ pending }: { pending: PendingFounder }) {
   const genesis = app.dao?.founded ?? app.dao?.pending.find(listedIn) ?? app.dao?.pending[0];
   const listed = genesis ? listedIn(genesis) : false;
   const amCouncil = genesis?.config.council.some(c => c.identityKey === pending.pubkey);
+  // The treasury key listed for this council member must be the one this phone gave: a code sent by message carries
+  // the treasury key outside the short code, so a swapped key would otherwise pass the read-aloud check.
+  const myTreasury = pending.hwKey ?? (pending.treasury ? { fingerprint: pending.treasury.fingerprint, xpub: pending.treasury.xpub } : undefined);
+  const listedTreasury = genesis?.config.council.find(c => c.identityKey === pending.pubkey);
+  const treasuryMismatch = !!(amCouncil && listedTreasury && (!myTreasury || listedTreasury.xpub !== myTreasury.xpub || listedTreasury.fingerprint !== myTreasury.fingerprint));
   const iEndorsed = genesis?.endorsers.some(e => e.key === pending.pubkey);
   const founded = !!app.daoId && app.dao?.founded === genesis;
   const m = genesis?.config.threshold ?? site.threshold;
 
   const endorse = async () => {
-    if (!genesis) return;
+    if (!genesis || treasuryMismatch) return;
     setErr(undefined);
     setBusy(true);
     try {
@@ -324,7 +308,8 @@ function Wait({ pending }: { pending: PendingFounder }) {
                 <h3>{t('fs.endorseTitle')}</h3>
                 <p class="small">{t('fs.endorseText')}</p>
                 <GenesisSummary g={genesis} />
-                {iEndorsed ? <p class="ok">{t('fs.endorsed')}</p> : <button type="button" class="btn primary" disabled={busy} onClick={endorse}>{t('fs.endorse')}</button>}
+                {treasuryMismatch && <p class="warnbox">{t('fs.treasuryMismatch', { listed: listedTreasury!.fingerprint, mine: myTreasury?.fingerprint ?? '—' })}</p>}
+                {iEndorsed ? <p class="ok">{t('fs.endorsed')}</p> : <button type="button" class="btn primary" disabled={busy || treasuryMismatch} onClick={endorse}>{t('fs.endorse')}</button>}
               </div>
             )}
             <p class="small">{t('fs.autoRefresh')}</p>

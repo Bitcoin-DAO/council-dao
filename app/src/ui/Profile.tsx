@@ -5,6 +5,7 @@ import { markWordsChecked, restoreTreasuryKey, signAndPublish, signOut, useApp }
 import { KIND } from '../core/events';
 import { fmtDate, t } from '../i18n';
 import { validAddress } from '../core/state';
+import { BadgesCard } from './Badges';
 import { Address, Footer, Header, PrintCard, ShortCode, WordsCheck, errText, go, askConfirm } from './parts';
 
 export function Profile() {
@@ -85,6 +86,29 @@ export function Profile() {
   const former = left || (!!s && !s.memberAt(me.key, s.now));
   const pa = payAddr.trim();
   const payErr = pa && (!validAddress(pa, network) ? t('np.addressBad', { network }) : s?.isTreasuryAddress(pa) ? t('np.addressTreasury') : undefined);
+  // A member's wallet address comes first while it is missing: the DAO can pay them only there (badge 1, Wallet).
+  const payoutCard = app.secret && s && !former ? (
+          <div class={standing ? 'card' : 'card flag'} id="payout">
+            <h3>{t('profile.payout')}</h3>
+            <p class="small">{t('profile.payoutText')}</p>
+            {standing ? <Address value={standing.address} /> : <p class="small">{t('profile.payoutNone')}</p>}
+            {(editing || !standing) && (
+              <>
+                <label class="field">{t('profile.payoutNew')}<input type="text" class="mono" autoComplete="off" spellcheck={false} value={payAddr} onInput={e => setPayAddr((e.target as HTMLInputElement).value)} /></label>
+                {payErr && <p class="error">{payErr}</p>}
+                <button type="button" class="btn primary" disabled={!pa || !!payErr || busy || pa === standing?.address} onClick={() => setStanding(pa)}>{t('profile.payoutSave')}</button>
+              </>
+            )}
+            {standing && !editing && (
+              <div class="row" style="justify-content:flex-start;gap:8px">
+                <button type="button" class="btn secondary" onClick={() => setEditing(true)}>{t('profile.payoutReplace')}</button>
+                <button type="button" class="btn link" disabled={busy} onClick={() => setStanding()}>{t('profile.payoutRemove')}</button>
+              </div>
+            )}
+            <p class="note">{t('profile.payoutPrivacy')}</p>
+            {payMsg && <p class="warnbox">{payMsg}</p>}
+          </div>
+  ) : null;
   return (
     <>
       <Header />
@@ -96,6 +120,8 @@ export function Profile() {
           <span class="small">{t('profile.code')}</span>
           <ShortCode pubkey={me.key} />
         </div>
+        {!standing && payoutCard}
+        {!former && <BadgesCard />}
         {former && (
           <div class="card">
             <p class="ok">{t('profile.left', { dao })}</p>
@@ -134,28 +160,7 @@ export function Profile() {
             {words && <p class="mono" style="font-size:15px;line-height:1.8">{tk.mnemonic}</p>}
           </div>
         )}
-        {app.secret && s && !former && (
-          <div class="card">
-            <h3>{t('profile.payout')}</h3>
-            <p class="small">{t('profile.payoutText')}</p>
-            {standing ? <Address value={standing.address} /> : <p class="small">{t('profile.payoutNone')}</p>}
-            {(editing || !standing) && (
-              <>
-                <label class="field">{t('profile.payoutNew')}<input type="text" class="mono" autoComplete="off" spellcheck={false} value={payAddr} onInput={e => setPayAddr((e.target as HTMLInputElement).value)} /></label>
-                {payErr && <p class="error">{payErr}</p>}
-                <button type="button" class="btn primary" disabled={!pa || !!payErr || busy || pa === standing?.address} onClick={() => setStanding(pa)}>{t('profile.payoutSave')}</button>
-              </>
-            )}
-            {standing && !editing && (
-              <div class="row" style="justify-content:flex-start;gap:8px">
-                <button type="button" class="btn secondary" onClick={() => setEditing(true)}>{t('profile.payoutReplace')}</button>
-                <button type="button" class="btn link" disabled={busy} onClick={() => setStanding()}>{t('profile.payoutRemove')}</button>
-              </div>
-            )}
-            <p class="note">{t('profile.payoutPrivacy')}</p>
-            {payMsg && <p class="warnbox">{payMsg}</p>}
-          </div>
-        )}
+        {standing && payoutCard}
         {app.secret && !me.council && !former && (
           <div class="card">
             <h3>{t('profile.leave')}</h3>

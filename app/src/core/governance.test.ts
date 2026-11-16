@@ -12,6 +12,7 @@ import { shortCode } from './shortcode';
 import { nextRoster, nextSettings, rebuild, TALLY_SETTLE, type DaoState, type ProposalContent, type TallyContent } from './state';
 import { hashJson, parseJson } from './util';
 import { roundDatesAfter } from './time';
+import { badgesOf, nextBadge } from './badges';
 
 const MNEMONICS = [
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
@@ -794,6 +795,46 @@ describe('payout rounds (6.1-6.3)', () => {
     expect(fin.txid).toBe(d.state(t + 1).rounds.find(r => r.event.id === a.e.id)!.inspection!.txid);
     const signedRound = d.ev(KIND.round, { round: '2026-12', proposals: [p.id], psbt: honest[0], fee_rate_sat_vb: 2, fee_sat: a.r.fee }, d.c[0], t + 2);
     expect(d.state(t + 3).rounds.find(r => r.event.id === signedRound.id)!.errors.join()).toContain('already carries a signature');
+  });
+
+  // badges (proposal: badges.md 1.2), here for the round helpers
+  it('Wallet, Voice, Proposer and Builder come from the record, per person', () => {
+    const d = dao();
+    const badge = (s: DaoState, secret: string, id: string) => badgesOf(s, s.personOf(pubkeyOf(secret))).find(b => b.id === id)!;
+    // Wallet: a standing address, and it stays once earned
+    d.ev(KIND.confirm, { address: addrOf(40), standing: true }, d.f[0], d.T);
+    d.ev(KIND.confirm, { standing: false }, d.f[0], d.T + 5);
+    let s = d.state(d.T + 6);
+    expect(s.standingAt(pubkeyOf(d.f[0]), s.now)).toBeUndefined();
+    expect(badge(s, d.f[0], 'wallet').at).toBe(d.T);
+    expect(badge(s, d.f[1], 'wallet').at).toBeUndefined();
+    // Proposer at once; Voice waits for the count
+    const p = d.propose(d.f[0], { type: 'payout', payload: { recipient: '', outputs: [], bounty: true, schedule: [{ amount_sat: 50_000, due_days: 30 }] } }, d.T + 10);
+    for (const i of [0, 1, 2]) d.vote(d.f[i], p, 'yes', d.T + 12);
+    s = d.state(d.T + 20);
+    expect(badge(s, d.f[0], 'proposer').proposal?.id).toBe(p.id);
+    expect(badge(s, d.f[1], 'proposer').at).toBeUndefined();
+    expect(badge(s, d.f[1], 'voice')).toEqual(expect.objectContaining({ waiting: true })); expect(badge(s, d.f[1], 'voice').at).toBeUndefined();
+    const tallyAt = d.T + 8 * DAY;
+    d.tally(d.c[0], d.state(tallyAt), p, tallyAt);
+    s = d.state(tallyAt + 1);
+    expect(badge(s, d.f[1], 'voice')).toMatchObject({ at: tallyAt, proposal: { id: p.id } });
+    expect(badge(s, d.f[3], 'voice').at).toBeUndefined();
+    // Builder: claimed and reported waits; paid earns it, for the claimant the round chose
+    const t = tallyAt + 10;
+    d.ev(KIND.claim, { address: addrOf(31) }, d.f[1], t, [['e', p.id]]);
+    d.ev(KIND.claim, { address: addrOf(32) }, d.f[2], t, [['e', p.id]]);
+    d.ev(KIND.report, { tranche: 1, text: 'fatto' }, d.f[1], t + 1, [['e', p.id]]);
+    d.ev(KIND.report, { tranche: 1, text: 'fatto anche io' }, d.f[2], t + 1, [['e', p.id]]);
+    s = d.state(t + 2);
+    expect(badge(s, d.f[2], 'builder')).toEqual(expect.objectContaining({ waiting: true })); expect(badge(s, d.f[2], 'builder').at).toBeUndefined();
+    const r = trancheRound(d, p.id, 1, addrOf(32), 50_000, t + 4, coins(d).slice(1));
+    pay(d, r.e, r.r, t + 6);
+    s = d.state(t + 8);
+    expect(badge(s, d.f[2], 'builder').proposal?.id).toBe(p.id);
+    expect(badge(s, d.f[2], 'builder').at).toBeGreaterThanOrEqual(t + 4);
+    expect(badge(s, d.f[1], 'builder').at).toBeUndefined();
+    expect(nextBadge(badgesOf(s, s.personOf(pubkeyOf(d.f[2]))))?.id).toBe('wallet');
   });
 });
 

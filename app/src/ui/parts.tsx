@@ -1,6 +1,6 @@
 import { render, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { completeFounding, setLang, useApp } from '../app';
+import { completeFounding, getState, setLang, useApp } from '../app';
 import { newCount } from './Discussion';
 import { t } from '../i18n';
 import { qrMatrix, startScanner, type Scanner } from '../lib/qr';
@@ -16,7 +16,35 @@ export const go = (path: string) => {
 };
 
 /** A link from the record, only if it is an ordinary web address (review I-5): never javascript: or the like. */
+/**
+ * A translated sentence naming the DAO's group: with a group in the site config, `withKey` is used and its {group}
+ * becomes a link to it; without one, `withoutKey`.
+ */
+export function GroupText(props: { withKey: Parameters<typeof t>[0]; withoutKey: Parameters<typeof t>[0]; vars?: Record<string, string | number> }) {
+  const group = useApp().site?.group;
+  const url = group ? safeHref(group.url) : undefined;
+  if (!group || !url) return <>{t(props.withoutKey, props.vars)}</>;
+  const [before, after = ''] = t(props.withKey, props.vars).split('{group}');
+  return <>{before}<a href={url} target="_blank" rel="noopener noreferrer">{group.name}</a>{after}</>;
+}
+
 export const safeHref = (url: unknown): string | undefined => (typeof url === 'string' && /^https?:\/\/[^\s]+$/i.test(url) ? url : undefined);
+
+/** "ALPHA DAO" is written alpha▪dao (the byob.zone wordmark); a name not ending in DAO stays as it is. */
+export function wordmarkParts(name: string): [string, string] | null {
+  const m = /^(.+?)\s+dao$/i.exec(name.trim());
+  return m ? [m[1].toLowerCase(), 'dao'] : null;
+}
+
+function Wordmark(props: { name: string }) {
+  const parts = wordmarkParts(props.name);
+  if (!parts) return <span class="name">{props.name}</span>;
+  return (
+    <span class="name wordmark" aria-label={props.name}>
+      <span class="wm-a" aria-hidden="true">{parts[0]}</span><span class="wm-dot" aria-hidden="true"></span><span class="wm-b" aria-hidden="true">{parts[1]}</span>
+    </span>
+  );
+}
 
 export function errText(e: unknown): string {
   const msg = String((e as Error)?.message ?? e);
@@ -44,7 +72,7 @@ export function Header(props: { sub?: string; tabs?: ComponentChildren }) {
     <>
       <header class="top">
         <a href="#/" style="display:flex;flex-direction:column">
-          <span class="name">{site?.name ?? 'btc-dao'}</span>
+          <Wordmark name={site?.name ?? 'btc-dao'} />
           <span class="sub">{props.sub ?? t('tagline')}</span>
         </a>
         <div class="actions">
@@ -357,4 +385,39 @@ export function WordsCheck({ mnemonic, onDone }: { mnemonic: string; onDone: () 
       )}
     </div>
   );
+}
+
+/** Shares a code as a message (the phone's share sheet), or copies it where sharing is not available. */
+export function ShareButton({ text, label }: { text: string; label?: string }) {
+  const [ok, setOk] = useState(false);
+  return (
+    <button
+      type="button"
+      class="btn secondary"
+      onClick={async () => {
+        try {
+          if (navigator.share) await navigator.share({ text });
+          else await navigator.clipboard.writeText(text);
+          setOk(true);
+          setTimeout(() => setOk(false), 2000);
+        } catch {
+          /* cancelled or not allowed */
+        }
+      }}
+    >
+      {ok ? t('fs.shared') : (label ?? t('fs.share'))}
+    </button>
+  );
+}
+
+/** A link to one of the DAO's own pages, for a message. */
+export const pageLink = (path: string) => `${getState().site!.site.replace(/\/$/, '')}/#${path}`;
+
+/**
+ * "Share in the group": the DAO's chat group is its notification channel. The phone's share sheet opens with a
+ * message ready (WhatsApp or any other app); nothing is sent by the app itself, and no one's number is in it.
+ */
+export function ShareToGroup({ text }: { text: string }) {
+  const group = useApp().site?.group;
+  return <ShareButton text={text} label={group ? t('share.toGroup', { group: group.name }) : t('share.plain')} />;
 }

@@ -8,7 +8,7 @@ import { formatShortCode, shortCode } from '../core/shortcode';
 import { parseJson } from '../core/util';
 import { createPasskey, passkeysAvailable } from '../lib/passkey';
 import { store, type PendingFounder } from '../lib/store';
-import { Footer, Header, ProtectKey, PrintCard, Qr, ShortCode, errText, go, askConfirm } from './parts';
+import { Footer, GroupText, Header, ProtectKey, PrintCard, Qr, ShareButton, ShortCode, errText, go, askConfirm } from './parts';
 import { statusText } from './Proposals';
 
 export function Candidate({ role }: { role: 'candidate' | 'rekey' }) {
@@ -101,9 +101,11 @@ export function Candidate({ role }: { role: 'candidate' | 'rekey' }) {
                 <Qr text={JSON.stringify(code)} size={260} label={pending.name} />
                 <ShortCode pubkey={pending.pubkey} />
                 <span class="small">{t('fs.shortCodeLabel')}</span>
+                <ShareButton text={t('fs.shareText', { dao: app.site!.name, role: t(role === 'candidate' ? 'cand.roleCandidate' : 'cand.roleNewKey'), name: pending.name, short: formatShortCode(shortCode(pending.pubkey)), code: JSON.stringify(code) })} />
                 <CopyText text={JSON.stringify(code)} />
               </div>
             )}
+            <p class="small"><GroupText withKey="cand.remoteGroup" withoutKey="cand.remote" /></p>
             <p class="small">{t('fs.autoRefresh')}</p>
             <button type="button" class="btn link" onClick={restart}>{t('fs.restart')}</button>
           </>

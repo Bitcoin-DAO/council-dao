@@ -5,7 +5,7 @@ compatibility_date = "2025-01-04"
 
 [vars]
 # Sites whose pages may read the gateway (scheme and host only; localhost is always allowed).
-ALLOWED_ORIGINS = "https://bitcoin-dao.github.io"
+ALLOWED_ORIGINS = "https://bitcoin-dao.github.io,https://alpha.byob.zone,https://byob.zone"
 # Sources behind the gateway, asked in order. Blockbook servers, comma-separated:
 BLOCKBOOK = "https://blockbook.tbtc.zelcore.io"
 # Esplora APIs, comma-separated:

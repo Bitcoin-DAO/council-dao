@@ -7,8 +7,10 @@
   --line: #d5dddc;
   --line-2: #e3e8e7;
   --field: #9aaaad;
-  --accent: #b54d0a;
-  --accent-ink: #ffffff;
+  /* The byob.zone orange (the wordmark's square). Too light for text on white: it colours shapes, with ink on them. */
+  --accent: #e8834a;
+  --accent-ink: #10292e;
+  --accent-tint: #fbe3d3;
   --teal: #1f6b70;
   --teal-ink: #1f4f53;
   --teal-bg: #e3f0f0;
@@ -33,6 +35,10 @@ button { font-family: inherit; }
 .top { background: var(--ink); color: #fff; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .top a { color: inherit; text-decoration: none; }
 .top .name { font-size: 20px; font-weight: 700; letter-spacing: 0.04em; }
+.top .wordmark { display: inline-flex; align-items: baseline; font-family: var(--mono); font-size: 22px; letter-spacing: -0.02em; }
+.top .wm-a { font-weight: 700; color: #fff; }
+.top .wm-dot { display: inline-block; width: 7px; height: 7px; background: #E8834A; margin: 0 2px; }
+.top .wm-b { font-weight: 400; color: var(--head-sub); }
 .top .sub { font-size: 12px; color: var(--head-sub); margin-top: 2px; }
 .top .actions { display: flex; gap: 8px; align-items: center; }
 .btn-head { min-height: 44px; padding: 0 12px; background: transparent; border: 1px solid var(--head-line); border-radius: 8px; color: #fff; font-size: 13px; cursor: pointer; }
@@ -92,7 +98,7 @@ label.check input { width: 24px; height: 24px; margin: 0; flex: none; accent-col
 .dots i.on { background: var(--teal); }
 
 .addr { font-family: var(--mono); font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
-.addr b { color: var(--accent); font-weight: 600; }
+.addr b { color: var(--ink); font-weight: 700; background: var(--accent-tint); border-radius: 2px; }
 .qr { background: #fff; display: block; max-width: 100%; height: auto; }
 .qr-wrap { display: flex; justify-content: center; }
 
@@ -103,7 +109,7 @@ label.check input { width: 24px; height: 24px; margin: 0; flex: none; accent-col
 .chip { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--line-2); color: var(--ink-2); }
 .chip.teal { background: var(--teal-bg); color: var(--teal-ink); }
 .amount-in { color: var(--teal); font-family: var(--mono); font-weight: 600; }
-.amount-out { color: var(--accent); font-family: var(--mono); font-weight: 600; }
+.amount-out { color: var(--ink); font-family: var(--mono); font-weight: 700; }
 .ok { color: var(--teal); font-weight: 600; }
 
 .scanner { position: fixed; inset: 0; background: rgba(16, 41, 46, 0.96); color: #fff; z-index: 10; display: flex; flex-direction: column; gap: 14px; padding: 20px; overflow-y: auto; }
@@ -138,6 +144,7 @@ label.check input { width: 24px; height: 24px; margin: 0; flex: none; accent-col
 .words { columns: 2; column-gap: 24px; margin: 4px 0; padding-left: 28px; font-size: 16px; line-height: 2; }
 .words li { break-inside: avoid; }
 
+.card.flag { border: 2px solid var(--accent); box-shadow: 0 0 0 4px var(--accent-tint); }
 .chip.new { background: var(--accent); color: var(--accent-ink); }
 .version.pinned { border: 2px solid var(--teal); }
 .post { background: var(--card); border: 1px solid var(--line-2); border-radius: 12px; padding: 10px 14px; }
@@ -147,3 +154,11 @@ label.check input { width: 24px; height: 24px; margin: 0; flex: none; accent-col
 .hwsteps li { color: var(--muted); }
 .hwsteps li.on { color: inherit; }
 .hwsteps li > .btn, .hwsteps li > p, .hwsteps li > div { margin-top: 8px; }
+
+/* Badges: "learning by doing" (docs/proposals/badges.md 1.2). The wordmark's square, filled once earned. */
+.sq { display: inline-block; width: 0.55em; height: 0.55em; background: var(--accent); margin-right: 0.45em; vertical-align: 0.08em; }
+ul.badges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.badge { display: flex; flex-direction: column; gap: 2px; padding-left: 22px; position: relative; }
+.badge::before { content: ''; position: absolute; left: 0; top: 0.3em; width: 12px; height: 12px; border: 2px solid var(--accent); box-sizing: border-box; }
+.badge.earned::before { background: var(--accent); }
+.badge .btn.link { align-self: flex-start; width: auto; padding-left: 0; text-align: left; }

@@ -99,6 +99,8 @@ async function councilAction(page, buttonName) {
   }
   await a.getByRole('button', { name: '4 · Pubblica' }).click();
   await a.getByRole('button', { name: 'Firma e pubblica' }).click();
+  // A council other than the one planned (the test file plans 5 seats, 3 signatures) is published on purpose.
+  await a.getByRole('button', { name: 'Pubblica lo stesso' }).click({ timeout: 3000 }).catch(() => {});
   await a.getByText('Pubblicate ✓').waitFor({ timeout: 20000 });
   for (const p of [B, C]) {
     await open(p.page, '#/founder');
@@ -192,6 +194,7 @@ async function councilAction(page, buttonName) {
   await open(f2, `#/p/${payoutId}`);
   // Votes arrive from the relays over a few seconds: wait for the count rather than reading it once.
   check(await seen(f2.locator('.kv').filter({ hasText: /^Sì\s*5$/ })), 'changed vote counted once: 5 yes');
+  check(await f2.getByRole('button', { name: 'Condividi', exact: true }).isVisible(), 'an open vote can be shared to the group');
   await shot(f2, '05-voting');
   check(!(await n.getByText('Sì', { exact: true }).isVisible()), 'candidate cannot vote');
 
@@ -208,6 +211,18 @@ async function councilAction(page, buttonName) {
   check(true, 'payout passed after the automatic count');
   check(await f1.getByText(/Conteggio finale firmato da @anna/).isVisible(), 'count signed by a council member');
   await shot(f1, '06-passed');
+
+  log('Badges: learning by doing');
+  await open(f2, '#/');
+  check(await seen(f2.locator('#badge-earned').getByText(/Voce/)), 'a counted vote earns Voice, with a note on Home');
+  check(await f2.locator('#badge-earned').getByRole('button', { name: 'Condividi', exact: true }).isVisible(), 'the badge note can be shared to the group');
+  await f2.locator('#badge-earned').getByRole('button', { name: 'OK' }).click();
+  check(!(await f2.locator('#badge-earned').count()), 'the note goes once seen');
+  await open(f2, '#/profile');
+  check(await seen(f2.locator('#badges').getByText(/Voto contato su #\d+/)), 'Profile says what earned Voice');
+  await open(f1, '#/profile');
+  check(await seen(f1.locator('#badges .badge.earned').filter({ hasText: 'Proponente' })), 'the proposer holds Proposer');
+  await shot(f1, '06b-badges');
   await open(f1, `#/p/${rulesId}`);
   check(await f1.getByText('Approvata ✓').first().waitFor({ timeout: 30000 }).then(() => true, () => false), 'rules change passed (two-thirds)');
   check(await seen(f1.getByText(/Approvata, ma non ancora in vigore/)), 'passed rules change says it waits for the council');

@@ -10,7 +10,7 @@ import { parseFounderCode, type FounderCode } from '../core/identity';
 import { formatShortCode, shortCode } from '../core/shortcode';
 import { hashJson, sha256Hex } from '../core/util';
 import { store, type SetupState } from '../lib/store';
-import { Header, ScanModal, ShortCode, errText, go } from './parts';
+import { Header, ScanModal, ShortCode, askConfirm, errText, go } from './parts';
 import { GenesisSummary } from './Founder';
 import charterText from '@charter?raw';
 import { cadenceOf } from '../core/time';
@@ -121,12 +121,18 @@ export function Setup() {
   } catch (e) {
     buildErr = errText(e);
   }
+  // The council planned in the site file (its placeholder seats and threshold), to compare with the one added.
+  const plannedN = site.council.length;
+  const plannedM = site.threshold;
+  const offPlan = plannedN > 0 && (s.council.length !== plannedN || s.threshold !== plannedM);
   const daoId = s.genesisJson ? hashJson(JSON.parse(s.genesisJson)) : genesis ? hashJson(genesis) : undefined;
 
   const publishGenesis = async () => {
     if (!genesis || !daoId) return;
     setMsg(undefined);
     if (!s.council.some(c => c.key === me.pubkey)) return setMsg(t('setup.youMustBeCouncil'));
+    // A council different from the one planned in the site file is published only on purpose.
+    if (offPlan && !(await askConfirm(t('setup.offPlanConfirm', { k: s.council.length, n: plannedN, thr: s.threshold, m: plannedM }), t('setup.publishAnyway'), true))) return;
     setBusy(true);
     try {
       const g = sign(template(KIND.genesis, daoId, genesis), me.secret);
@@ -204,6 +210,7 @@ export function Setup() {
                 <button type="button" class="btn-head" style="color:var(--ink);border-color:var(--field)" disabled={locked || s.threshold >= s.council.length} onClick={() => save({ ...s, threshold: s.threshold + 1, thresholdSet: true })}>+</button>
               </span>
             </div>
+            {plannedN > 0 && <p class="small">{t('setup.planned', { n: plannedN, m: plannedM })}</p>}
             {s.council.length > 0 && s.threshold >= s.council.length && <p class="warnbox">{t('setup.noSpare', { n: s.council.length })}</p>}
             <div class="card list">
               {new Set(s.council.map(c => c.device ?? 'phone')).size > 1 && <p class="warnbox">{t('setup.mixedKeys')}</p>}
@@ -253,6 +260,7 @@ export function Setup() {
           <>
             <h1>{t('setup.publish')}</h1>
             {buildErr && <p class="warnbox">{buildErr}</p>}
+            {!locked && offPlan && s.council.length > 0 && <p class="warnbox">{t('setup.offPlan', { k: s.council.length, n: plannedN, thr: s.threshold, m: plannedM })}</p>}
             {!genesis && !locked && <p class="warnbox">{t('setup.councilNeed', { n: Math.max(2, s.threshold), missing: Math.max(2, s.threshold) - s.council.length })}</p>}
             {candidate ? (
               <div class="card"><h3>{t('setup.summary')}</h3><GenesisSummary g={candidate} /></div>

@@ -74,6 +74,7 @@ async function signUp(page, name, council, wrongWords = false) {
     await a.getByRole('button', { name: 'Coincide: aggiungi' }).click();
   }
   check(await a.getByText('2 di 3').isVisible(), 'threshold follows the council added: 2 of 3 (site file has 5 placeholders)');
+  check(await a.getByText('Previsto nel file del sito: un Consiglio di 5, con 3 firme necessarie.').isVisible(), 'the planned council is shown');
   check(await a.getByText('3 finora').isVisible(), 'council size shown');
   await a.getByRole('button', { name: '3 · Fondatori' }).click();
   await a.getByRole('button', { name: 'Scansiona un fondatore' }).click();
@@ -81,6 +82,8 @@ async function signUp(page, name, council, wrongWords = false) {
   await a.getByRole('button', { name: 'Coincide: aggiungi' }).click();
   await a.getByRole('button', { name: '4 · Pubblica' }).click();
   await a.getByRole('button', { name: 'Firma e pubblica' }).click();
+  // A council other than the one planned (the test file plans 5 seats, 3 signatures) is published on purpose.
+  await a.getByRole('button', { name: 'Pubblica lo stesso' }).click({ timeout: 3000 }).catch(() => {});
   await a.getByText('Pubblicate ✓').waitFor({ timeout: 20000 });
   await open(B.page, '#/founder');
   await B.page.getByRole('button', { name: 'Approva e firma' }).click();

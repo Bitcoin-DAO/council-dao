@@ -208,6 +208,8 @@ const txid = file => execFileSync('python3', ['-c', 'import sys,json\nfrom embit
   await a.getByRole('button', { name: 'Coincide: aggiungi' }).click();
   await a.getByRole('button', { name: '4 · Pubblica' }).click();
   await a.getByRole('button', { name: 'Firma e pubblica' }).click();
+  // A council other than the one planned (the test file plans 5 seats, 3 signatures) is published on purpose.
+  await a.getByRole('button', { name: 'Pubblica lo stesso' }).click({ timeout: 3000 }).catch(() => {});
   await a.getByText('Pubblicate ✓').waitFor({ timeout: 20000 });
   await open(mb, '#/founder');
   await mb.getByRole('button', { name: 'Approva e firma' }).click();

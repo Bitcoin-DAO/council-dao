@@ -106,6 +106,8 @@ async function claim(page, pid, address) {
   await a.getByRole('button', { name: 'Coincide: aggiungi' }).click();
   await a.getByRole('button', { name: '4 · Pubblica' }).click();
   await a.getByRole('button', { name: 'Firma e pubblica' }).click();
+  // A council other than the one planned (the test file plans 5 seats, 3 signatures) is published on purpose.
+  await a.getByRole('button', { name: 'Pubblica lo stesso' }).click({ timeout: 3000 }).catch(() => {});
   await a.getByText('Pubblicate ✓').waitFor({ timeout: 20000 });
   await open(B.page, '#/founder');
   await B.page.getByRole('button', { name: 'Approva e firma' }).click();

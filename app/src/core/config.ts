@@ -112,6 +112,11 @@ export interface DaoConfig {
 /** The file the site is built with. `daoId` is added once the DAO is founded. */
 export interface SiteConfig extends DaoConfig {
   daoId?: string;
+  /**
+   * The DAO's chat group (WhatsApp, Signal…), where remote founders and candidates post their codes and hold the
+   * video calls in which the short code is read. A site setting, not part of the record: never copied into the genesis.
+   */
+  group?: { name: string; url: string };
 }
 
 /** Values in square brackets in the example config are placeholders. */
@@ -136,7 +141,7 @@ export function buildGenesis(site: SiteConfig, fill: {
   /** The vote length chosen at founding, if not the site file's. */
   votingPeriodDays?: number;
 }): DaoConfig {
-  const { daoId: _ignored, ...base } = site;
+  const { daoId: _ignored, group: _group, ...base } = site;
   return {
     ...base,
     name: fill.name,

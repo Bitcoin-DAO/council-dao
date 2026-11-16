@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import { signIn, useApp } from '../app';
 import { t } from '../i18n';
 import { passkeysAvailable } from '../lib/passkey';
-import { Footer, Header, errText, go } from './parts';
+import { Footer, GroupText, Header, errText, go } from './parts';
 
 export function Join() {
   const app = useApp();
@@ -53,7 +53,7 @@ export function Join() {
           </a>
         )}
         <p class="lead">{t('join.intro')}</p>
-        <div class="note"><strong>{t('join.howTitle')}</strong> {t('join.how')}</div>
+        <div class="note"><strong>{t('join.howTitle')}</strong> <GroupText withKey="join.howGroup" withoutKey="join.how" /></div>
         <button type="button" class="btn primary" onClick={() => go('/candidate')}>{t('join.become')}</button>
         <button type="button" class="btn secondary" disabled={busy} onClick={doSignIn}>{t('join.signin')}</button>
         {msg && <p class="warnbox">{msg}</p>}

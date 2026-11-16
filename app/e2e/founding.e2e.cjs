@@ -120,6 +120,8 @@ async function decodeQrIn(page, selector) {
   await s.getByRole('button', { name: 'Avanti: pubblica' }).click();
   await s.screenshot({ path: `${SHOTS}/06-setup-publish.png`, fullPage: true });
   await s.getByRole('button', { name: 'Firma e pubblica' }).click();
+  // A council other than the one planned (the test file plans 5 seats, 3 signatures) is published on purpose.
+  await s.getByRole('button', { name: 'Pubblica lo stesso' }).click({ timeout: 3000 }).catch(() => {});
   await s.getByText('Pubblicate ✓').waitFor({ timeout: 20000 });
   check(await s.getByText('Approvazioni del Consiglio: 1 di 3').isVisible(), 'publisher endorsed: 1 of 3');
 
@@ -168,6 +170,7 @@ async function decodeQrIn(page, selector) {
   log('Treasury page');
   await f0.goto(URL0);
   await f0.getByText('Saldo della tesoreria').waitFor();
+  check(await f0.getByText('Aggiungi il tuo indirizzo bitcoin').isVisible(), 'a new member is asked first for their wallet address');
   await f0.locator('.addr').waitFor({ timeout: 30000 });
   const addr0 = (await f0.locator('.addr').innerText()).replace(/\s+/g, '');
   check(/^tb1q[0-9a-z]{58}$/.test(addr0), `donation address ${addr0.slice(0, 12)}…`);

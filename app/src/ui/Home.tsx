@@ -5,6 +5,7 @@ import { chainApis, manualRetryIn, refreshTreasury, useApp } from '../app';
 import { fmtDate, fmtSats, t } from '../i18n';
 import { Address, Footer, Header, Qr, go } from './parts';
 import { Join } from './Join';
+import { BadgesHome } from './Badges';
 import { ProposalCard } from './Proposals';
 import { councilTodo } from './Council';
 import { cadenceOf, roundDatesAfter } from '../core/time';
@@ -36,6 +37,15 @@ export function Home() {
     <>
       <Header />
       <main>
+        {app.me && app.secret && !app.dao!.closed && !app.dao!.standingAt(app.me.key, app.dao!.now) && (
+          <section class="card flag">
+            <h2>{t('home.walletTitle')}</h2>
+            <p>{t('home.walletText')}</p>
+            {cfg.network !== 'mainnet' && <p class="small">{t('home.walletTest')}</p>}
+            <button type="button" class="btn primary" onClick={() => go('/profile')}>{t('home.walletGo')}</button>
+          </section>
+        )}
+        {app.me && <BadgesHome />}
         <section class="card">
           <span class="small" style="font-size:15px">{t('home.balance')}</span>
           {tr ? (

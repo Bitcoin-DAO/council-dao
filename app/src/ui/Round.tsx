@@ -17,7 +17,7 @@ import { buildRound, estimateVsize, finalizeRound, masterFromSeed, memberSignatu
 import { cadenceOf, roundLabel } from '../core/time';
 import { proposalLabel, type Output, type ProposalView, type RoundView } from '../core/state';
 export { nextRoundOutputs } from '../core/next';
-import { CouncilOnly, Address, Footer, Header, errText, go, askText } from './parts';
+import { CouncilOnly, Address, Footer, Header, ShareToGroup, errText, go, askText, pageLink } from './parts';
 import { useNameOf } from './Proposals';
 
 
@@ -404,6 +404,9 @@ export function RoundDetail({ id }: { id: string }) {
         <section class="card">
           <h3>{t('rd.signatures', { n: signers.length, m: r.threshold })}</h3>
           {signers.length > 0 && <p class="small">{t('rd.signedBy', { names: signers.map(p => nameOf(p)).join(', ') })}</p>}
+          {r.status === 'open' && !r.replacedBy && !r.ready && app.isCouncil && (
+            <ShareToGroup text={t('share.roundText', { dao: app.site!.name, round: r.content.round, n: signers.length, m: r.threshold, link: pageLink(`/round/${r.event.id}`) })} />
+          )}
           {r.declines.map(d => <p class="small">{t('rd.declinedBy', { name: nameOf(d.person), reason: d.reason })}</p>)}
           {r.status === 'open' && r.replacedBy && (
             <p class="warnbox">{t('rd.replaced')} <a href={`#/round/${r.replacedBy.event.id}`}>{t('rd.replacedLink', { round: r.replacedBy.content.round })}</a></p>

@@ -7,7 +7,7 @@ import { KIND, tagValue, type Event } from '../core/events';
 import { proposalLabel, type Choice, type Output, type ProposalView } from '../core/state';
 import { formatShortCode, shortCode } from '../core/shortcode';
 import { nowSec, parseJson } from '../core/util';
-import { Address, Footer, Header, errText, go, safeHref } from './parts';
+import { Address, Footer, Header, ShareToGroup, errText, go, pageLink, safeHref } from './parts';
 import { PaymentLine } from './Round';
 import { Delivery } from './Delivery';
 import { cadenceOf } from '../core/time';
@@ -224,6 +224,9 @@ export function ProposalDetail({ id }: { id: string }) {
           <p class="small">{p.twoThirds ? t('pd.majority2') : t('pd.majority1')}</p>
           <p class="small">{votingOpen ? t('pd.closes', { date: fmtDateTime(p.closeAt) }) : t('pd.closed', { date: fmtDateTime(p.closeAt) })}</p>
           {p.status === 'open' && !votingOpen && <p class="small">{t('pd.countingSoon')}</p>}
+          {votingOpen && app.me && (
+            <ShareToGroup text={t('share.voteText', { dao: app.site!.name, label: proposalLabel(app.site!.name, p.number), title: c.title, date: fmtDateTime(p.closeAt), link: pageLink(`/p/${p.event.id}`) })} />
+          )}
           {votingOpen && (
             !app.me || !app.secret ? (
               <button type="button" class="btn secondary" onClick={() => go('/join')}>{t('pd.signInToVote')}</button>

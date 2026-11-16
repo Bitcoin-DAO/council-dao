@@ -139,6 +139,13 @@ describe('founding (protocol 3.1, 3.2, 3.5)', () => {
     expect(isPracticeVotes(3)).toBe(false);
   });
 
+  it('keeps the chat group out of the founding record: a new group link must not make a different DAO', () => {
+    const base = { name: 'UNO', description: 'd', council: [], founders: [], threshold: 1, descriptor: 'x', charterSha256: 'ab'.repeat(32) };
+    const withGroup = { ...site, group: { name: 'UNO on WhatsApp', url: 'https://chat.whatsapp.com/abc' } };
+    expect('group' in buildGenesis(withGroup, base)).toBe(false);
+    expect(hashJson(buildGenesis(withGroup, base))).toBe(hashJson(buildGenesis(site, base)));
+  });
+
   it('is pending until threshold distinct council endorsements, then founded', () => {
     const f = founding();
     let s = rebuild(site, [f.g, f.endorse(0, 1001), f.endorse(1, 1002), f.endorse(1, 1003)]);

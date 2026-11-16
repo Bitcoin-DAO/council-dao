@@ -254,6 +254,8 @@ export interface DaoState {
   isTreasuryAddress(addr: string): boolean;
   /** The standing payout address of the member holding `key`, in force at time t. */
   standingAt(key: string, t: number): StandingAddress | undefined;
+  /** Every standing-address event (dao.confirm with no `e` tag), in time order; `address` absent for a withdrawal. */
+  standings: { event: Event; address?: string }[];
 }
 
 // ---------- helpers ----------
@@ -446,7 +448,7 @@ function rebuildOnce(site: SiteConfig, events: Event[], prefer?: string, now = n
     keywraps: new Map(), rejected,
     personOf: k => k, keyOf: p => p, isCouncilAt: () => false, memberAt: () => false,
     rosterAt: () => { throw new Error('not founded'); }, settingsAt: () => { throw new Error('not founded'); },
-    isTreasuryAddress: () => false, standingAt: () => undefined,
+    isTreasuryAddress: () => false, standingAt: () => undefined, standings: [],
   };
   if (!founded) return empty;
 
@@ -1386,7 +1388,7 @@ function rebuildOnce(site: SiteConfig, events: Event[], prefer?: string, now = n
     rosters, settings, rosterCandidates, settingsCandidates, rosterDisputed, settingsDisputed,
     members, rules: settings[settings.length - 1].content.rules, proposals, verifies, rekeys, leaves,
     pendingRoster, pendingSettings, rounds, payments, reports, claims, committed, closed: closedNow, keywraps,
-    personOf, keyOf, isCouncilAt, memberAt, rosterAt, settingsAt, isTreasuryAddress, standingAt,
+    personOf, keyOf, isCouncilAt, memberAt, rosterAt, settingsAt, isTreasuryAddress, standingAt, standings: standingList,
   };
 }
 
