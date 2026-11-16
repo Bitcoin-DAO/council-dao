@@ -45,7 +45,6 @@ export function Home() {
             <button type="button" class="btn primary" onClick={() => go('/profile')}>{t('home.walletGo')}</button>
           </section>
         )}
-        {app.me && <BadgesHome />}
         <section class="card">
           <span class="small" style="font-size:15px">{t('home.balance')}</span>
           {tr ? (
@@ -94,6 +93,8 @@ export function Home() {
           // During a council change, donations go to the new treasury: the old one is being emptied (COUNCIL DAO, 11 Nov 2026).
           <Donate address={nextTreasury(tr)?.donationAddress ?? tr.donationAddress} first={tr.balance === 0 && tr.movements.length === 0 && !nextTreasury(tr)} testnet={cfg.testnetTreasury?.name} />
         ))}
+
+        {app.me && <BadgesHome />}
 
         {app.isCouncil && app.me && councilTodo(app.dao!, app.me.person) > 0 && (
           <a class="card tint" style="text-decoration:none;color:var(--teal-ink)" href="#/council">

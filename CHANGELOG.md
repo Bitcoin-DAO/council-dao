@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.9.6 · 16 November 2026
+
+- **Home: the badge cards move down.** The "Badge earned" note and the next-step card now sit below the donation card, with a plain border. The **Add your bitcoin address** card stays at the top, the only one highlighted, until the address is added.
+
 ## v0.9.5 · 16 November 2026
 
 - **Badges: learning by doing.** Four things every member does at least once, counted by the app from the DAO's record, so nobody awards them: **Wallet** (an address added), **Voice** (a vote counted when the vote closes), **Proposer** (a proposal published) and **Builder** (a bounty claimed, delivered and paid). Each member sees theirs on their own Profile, with how to earn each one or what earned it; they are not shown on the Members page. Home suggests the next step when there is something to do now (an open vote, an open bounty), and when a badge is earned, shows a note once with **Share in the group**. A badge stays with the person if their key is replaced ([proposal](docs/proposals/badges.md)).

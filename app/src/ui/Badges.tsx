@@ -1,5 +1,6 @@
 // Members' badges, "learning by doing" (docs/proposals/badges.md 1.2): an onboarding path of four tasks done for
-// real. Shown only to the member themselves (Profile, Home), never beside names on the Members page.
+// real. Shown only to the member themselves (Profile, Home), never beside names on the Members page. On Home it sits
+// below the donation card, plain: the Wallet card at the top is the one thing flagged.
 import { useState } from 'preact/hooks';
 import { useApp } from '../app';
 import { badgesOf, BADGES, type Badge, type BadgeId } from '../core/badges';
@@ -77,7 +78,7 @@ export function BadgesHome() {
     const names = fresh.map(b => t(`badges.${b.id}` as any)).join(', ');
     const dismiss = () => { writeSeen(kSeen, [...seen, ...fresh.map(b => b.id)]); redraw(n => n + 1); };
     return (
-      <section class="card flag" id="badge-earned">
+      <section class="card" id="badge-earned">
         <h2><span class="sq" aria-hidden="true" />{t(fresh.length > 1 ? 'badges.earnedMany' : 'badges.earned', { names })}</h2>
         <p class="small">{t('badges.earnedText', { k: badges.filter(b => b.at).length, n: BADGES.length })}</p>
         <div class="row" style="justify-content:flex-start;gap:8px;flex-wrap:wrap">
