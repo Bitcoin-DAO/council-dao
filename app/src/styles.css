@@ -162,3 +162,6 @@ ul.badges { list-style: none; margin: 0; padding: 0; display: flex; flex-directi
 .badge::before { content: ''; position: absolute; left: 0; top: 0.3em; width: 12px; height: 12px; border: 2px solid var(--accent); box-sizing: border-box; }
 .badge.earned::before { background: var(--accent); }
 .badge .btn.link { align-self: flex-start; width: auto; padding-left: 0; text-align: left; }
+ul.badges.inline { flex-direction: row; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 8px; }
+ul.badges.inline .badge { padding-left: 18px; }
+ul.badges.inline .badge::before { top: 0.25em; width: 11px; height: 11px; }

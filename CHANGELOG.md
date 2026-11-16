@@ -2,6 +2,10 @@
 
 Each release is a git tag (`v0.1.1`). A DAO's copy runs one tagged release and records it in its README; a release moves to a DAO's next stage only after passing the one before ([guide, section 8](docs/guide.md#8-the-three-stages-practice-testnet-mainnet)).
 
+## v0.9.7 · 16 November 2026
+
+- **Home: badges for information only.** The badge card below the donation card shows the four badges and the next step, worked out afresh every time Home opens, and stays until all four are earned. No buttons on it: the **OK** and **Not now** links are gone. **Share in the group** moves to the badges card on the Profile.
+
 ## v0.9.6 · 16 November 2026
 
 - **Home: the badge cards move down.** The "Badge earned" note and the next-step card now sit below the donation card, with a plain border. The **Add your bitcoin address** card stays at the top, the only one highlighted, until the address is added.

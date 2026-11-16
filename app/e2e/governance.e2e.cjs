@@ -214,12 +214,13 @@ async function councilAction(page, buttonName) {
 
   log('Badges: learning by doing');
   await open(f2, '#/');
-  check(await seen(f2.locator('#badge-earned').getByText(/Voce/)), 'a counted vote earns Voice, with a note on Home');
-  check(await f2.locator('#badge-earned').getByRole('button', { name: 'Condividi', exact: true }).isVisible(), 'the badge note can be shared to the group');
-  await f2.locator('#badge-earned').getByRole('button', { name: 'OK' }).click();
-  check(!(await f2.locator('#badge-earned').count()), 'the note goes once seen');
+  check(await seen(f2.locator('#badges-home .badge.earned').filter({ hasText: 'Voce' })), 'Home shows Voice earned, from the record');
+  check(!(await f2.locator('#badges-home button').count()), 'the Home badge card is information only');
+  await open(f2, '#/');
+  check(await seen(f2.locator('#badges-home')), 'and is still there on the next load');
   await open(f2, '#/profile');
   check(await seen(f2.locator('#badges').getByText(/Voto contato su #\d+/)), 'Profile says what earned Voice');
+  check(await f2.locator('#badges').getByRole('button', { name: 'Condividi', exact: true }).isVisible(), 'badges can be shared to the group from Profile');
   await open(f1, '#/profile');
   check(await seen(f1.locator('#badges .badge.earned').filter({ hasText: 'Proponente' })), 'the proposer holds Proposer');
   await shot(f1, '06b-badges');
